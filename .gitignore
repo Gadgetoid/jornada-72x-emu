@@ -1,0 +1,9 @@
+build/
+headless
+rom/
+docs/
+reference/
+__pycache__/
+.DS_Store
+*.trace
+jornada720

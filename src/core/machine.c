@@ -1,0 +1,317 @@
+#include "core/machine.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#define DRAM_BASE   0xC0000000u
+#define DRAM_WINDOW 0x08000000u
+#define ZERO_BASE   0xE0000000u
+#define ZERO_WINDOW 0x08000000u
+#define SOC_BASE    0x80000000u
+#define SOC_END     0xC0000000u
+#define DEBUG_BOARD_BASE 0x18000000u
+#define DEBUG_BOARD_SIZE 0x04000000u
+
+#define PEN_SAMPLE_HZ 100
+#define GPIO_KEYBOARD 0
+#define GPIO_PEN 9
+#define GPIO_MCU_READY 10
+#define GPIO_MCU_SELECT 25
+#define GPIO_SA1111_INT 1
+#define GPIO_SA1111_RESET 20
+#define SA1111_BLOCK_B 1
+#define SA1111_EEPROM_SELECT 0
+
+static void note_unknown(machine_t *machine, uint32_t pa, int size, bool write, uint32_t value) {
+    for (int i = 0; i < machine->unknown_count; i++) {
+        machine_unknown_t *entry = &machine->unknown[i];
+        if (entry->pa == pa && entry->write == write) {
+            entry->count++;
+            entry->value = value;
+            entry->pc = machine->cpu.last_pc;
+            return;
+        }
+    }
+    if (machine->log)
+        fprintf(machine->log, "%s %08x size %d value %08x pc %08x\n", write ? "write" : "read ", pa, size, value, machine->cpu.last_pc);
+    if (machine->unknown_count == MACHINE_UNKNOWN_MAX) return;
+    machine->unknown[machine->unknown_count++] = (machine_unknown_t){
+        .pa = pa, .pc = machine->cpu.last_pc, .value = value, .count = 1, .write = write, .size = (uint8_t)size,
+    };
+}
+
+static void update_lines(machine_t *machine) {
+    machine->cpu.irq_line = sa1110_irq(&machine->soc);
+    machine->cpu.fiq_line = sa1110_fiq(&machine->soc);
+}
+
+static uint8_t *bus_page(void *context, uint32_t pa, bool write) {
+    machine_t *machine = context;
+    if (pa < MACHINE_ROM_SIZE) return write ? NULL : machine->rom + pa;
+    if (pa - DRAM_BASE < DRAM_WINDOW) {
+        if (pa - DRAM_BASE >= machine->dram_size && machine->log) fprintf(machine->log, "dram alias %08x pc %08x\n", pa, machine->cpu.last_pc);
+        return machine->dram + ((pa - DRAM_BASE) & (machine->dram_size - 1));
+    }
+    if (pa - ZERO_BASE < ZERO_WINDOW && !write) return machine->zero;
+    if (pa - SED1356_MEMORY_BASE < SED1356_MEMORY_SIZE) return machine->display.memory + (pa - SED1356_MEMORY_BASE);
+    return NULL;
+}
+
+static bool bus_read(void *context, uint32_t pa, int size, uint32_t *value) {
+    machine_t *machine = context;
+    if (pa >= SOC_BASE && pa < SOC_END) {
+        uint32_t word = 0;
+        bool known = sa1110_read(&machine->soc, machine->cpu.cycles, pa & ~3u, &word);
+        *value = size == 4 ? word : (word >> ((pa & 3) * 8)) & (size == 2 ? 0xFFFFu : 0xFFu);
+        if (pa == 0x90000010u)
+            optimiser_poll(&machine->optimiser, pa, machine->cpu.last_pc, *value, &machine->soc);
+        if (!known) note_unknown(machine, pa, size, false, 0);
+        update_lines(machine);
+        return true;
+    }
+    if (pa - ZERO_BASE < ZERO_WINDOW || pa - DEBUG_BOARD_BASE < DEBUG_BOARD_SIZE) {
+        *value = 0;
+        return true;
+    }
+    if (pa - SA1111_BASE < SA1111_SIZE) {
+        uint32_t word = 0;
+        bool known = sa1111_read(&machine->sa1111, (pa - SA1111_BASE) & ~3u, &word);
+        *value = size == 4 ? word : (word >> ((pa & 3) * 8)) & (size == 2 ? 0xFFFFu : 0xFFu);
+        if (!known) note_unknown(machine, pa, size, false, 0);
+        update_lines(machine);
+        return true;
+    }
+    if (pa - SED1356_REGISTER_BASE < SED1356_REGISTER_SIZE) {
+        *value = sed1356_read(&machine->display, pa - SED1356_REGISTER_BASE, size);
+        return true;
+    }
+    *value = 0;
+    note_unknown(machine, pa, size, false, 0);
+    return true;
+}
+
+static bool bus_write(void *context, uint32_t pa, int size, uint32_t value) {
+    machine_t *machine = context;
+    if (pa >= SOC_BASE && pa < SOC_END) {
+        if (!sa1110_write(&machine->soc, machine->cpu.cycles, pa & ~3u, value)) note_unknown(machine, pa, size, true, value);
+        update_lines(machine);
+        machine->cpu.yield = true;
+        return true;
+    }
+    if (pa - ZERO_BASE < ZERO_WINDOW || pa - DEBUG_BOARD_BASE < DEBUG_BOARD_SIZE) return true;
+    if (pa - SA1111_BASE < SA1111_SIZE) {
+        uint32_t offset = pa - SA1111_BASE;
+        if (machine->log && ((offset >= 0x600 && offset < 0x700) || (offset >= 0x200 && offset < 0x224)))
+            fprintf(machine->log, "sa1111 write %03x = %08x pc %08x\n", offset, value, machine->cpu.last_pc);
+        if (!sa1111_write(&machine->sa1111, (pa - SA1111_BASE) & ~3u, value)) note_unknown(machine, pa, size, true, value);
+        update_lines(machine);
+        machine->cpu.yield = true;
+        return true;
+    }
+    if (pa - SED1356_REGISTER_BASE < SED1356_REGISTER_SIZE) {
+        sed1356_write(&machine->display, pa - SED1356_REGISTER_BASE, size, value);
+        return true;
+    }
+    note_unknown(machine, pa, size, true, value);
+    return true;
+}
+
+static void soc_gpio_changed(void *context, uint32_t level, uint32_t direction) {
+    machine_t *machine = context;
+    if ((direction >> GPIO_MCU_SELECT) & 1) {
+        bool selected = !((level >> GPIO_MCU_SELECT) & 1);
+        if (machine->log && selected != machine->mcu.selected) fprintf(machine->log, "mcu %s\n", selected ? "select" : "release");
+        mcu_select(&machine->mcu, selected);
+    }
+    bool sa1111_running = (direction >> GPIO_SA1111_RESET) & 1 ? (level >> GPIO_SA1111_RESET) & 1 : true;
+    if (!sa1111_running) sa1111_reset(&machine->sa1111);
+}
+
+static uint8_t reverse_bits(uint8_t value) {
+    value = (uint8_t)(((value & 0xF0) >> 4) | ((value & 0x0F) << 4));
+    value = (uint8_t)(((value & 0xCC) >> 2) | ((value & 0x33) << 2));
+    return (uint8_t)(((value & 0xAA) >> 1) | ((value & 0x55) << 1));
+}
+
+static void update_mcu_lines(machine_t *machine) {
+    sa1110_set_gpio_input(&machine->soc, GPIO_KEYBOARD, !mcu_keyboard_pending(&machine->mcu));
+    sa1110_set_gpio_input(&machine->soc, GPIO_PEN, !machine->mcu.pen_down);
+    sa1110_set_gpio_input(&machine->soc, GPIO_MCU_READY, false);
+}
+
+static uint16_t soc_ssp_exchange(void *context, uint16_t value) {
+    machine_t *machine = context;
+    uint8_t sent = reverse_bits((uint8_t)(value >> 8));
+    uint8_t answer = mcu_exchange(&machine->mcu, sent);
+    if (machine->log) fprintf(machine->log, "mcu %02x -> %02x pc %08x pid %08x\n", sent, answer, machine->cpu.last_pc, machine->cpu.pid);
+    uint8_t reply = reverse_bits(answer);
+    update_mcu_lines(machine);
+    return reply;
+}
+
+void machine_key(machine_t *machine, uint8_t scancode, bool down) {
+    mcu_key(&machine->mcu, scancode, down);
+    update_mcu_lines(machine);
+}
+
+void machine_pen(machine_t *machine, bool down, uint16_t x, uint16_t y) {
+    if (down && !machine->mcu.pen_down) machine->pen_next_sample = machine->cpu.cycles + MACHINE_CPU_HZ / PEN_SAMPLE_HZ;
+    mcu_pen(&machine->mcu, down, x, y);
+    update_mcu_lines(machine);
+}
+
+void machine_touch(machine_t *machine, bool down, int x, int y) {
+    if (x < 0) x = 0;
+    if (x > 639) x = 639;
+    if (y < 0) y = 0;
+    if (y > 239) y = 239;
+    machine_pen(machine, down, (uint16_t)(64 + x * 896 / 640), (uint16_t)(64 + y * 896 / 240));
+}
+
+static void pen_tick(machine_t *machine) {
+    if (!machine->mcu.pen_down || machine->cpu.cycles < machine->pen_next_sample) return;
+    machine->pen_next_sample += MACHINE_CPU_HZ / PEN_SAMPLE_HZ;
+    sa1110_set_gpio_input(&machine->soc, GPIO_PEN, true);
+    sa1110_set_gpio_input(&machine->soc, GPIO_PEN, false);
+}
+
+static uint8_t sa1111_ssp_exchange(void *context, uint8_t value) {
+    machine_t *machine = context;
+    uint8_t reply = eeprom_exchange(&machine->eeprom, value);
+    if (machine->log) fprintf(machine->log, "eeprom %s %02x -> %02x\n", machine->eeprom.selected ? "sel" : "off", value, reply);
+    return reply;
+}
+
+static void sa1111_gpio_changed(void *context, int block, uint32_t level) {
+    machine_t *machine = context;
+    bool output = !((machine->sa1111.gpio_direction[block] >> SA1111_EEPROM_SELECT) & 1);
+    if (block == SA1111_BLOCK_B && output) eeprom_select(&machine->eeprom, !((level >> SA1111_EEPROM_SELECT) & 1));
+}
+
+static void sa1111_interrupt_changed(void *context, bool level) {
+    machine_t *machine = context;
+    sa1110_set_gpio_input(&machine->soc, GPIO_SA1111_INT, level);
+}
+
+static uint64_t machine_now(void *context) {
+    machine_t *machine = context;
+    return machine->cpu.cycles;
+}
+
+static bool dram_read(void *context, uint32_t pa, void *buffer, uint32_t length) {
+    machine_t *machine = context;
+    uint8_t *out = buffer;
+    for (uint32_t i = 0; i < length; i++) out[i] = machine->dram[(pa + i) & (machine->dram_size - 1)];
+    return true;
+}
+
+static void audio_output(void *context, const int16_t *frames, uint32_t count, uint32_t rate) {
+    machine_t *machine = context;
+    if (rate != machine->audio_rate) machine->audio_read = machine->audio_write;
+    machine->audio_rate = rate;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = machine->audio_write % MACHINE_AUDIO_FRAMES;
+        machine->audio[slot * 2] = frames[i * 2];
+        machine->audio[slot * 2 + 1] = frames[i * 2 + 1];
+        machine->audio_write++;
+        if (machine->audio_write - machine->audio_read > MACHINE_AUDIO_FRAMES) machine->audio_read++;
+    }
+}
+
+uint32_t machine_audio_take(machine_t *machine, int16_t *frames, uint32_t max_frames, uint32_t *rate) {
+    uint32_t count = 0;
+    while (count < max_frames && machine->audio_read != machine->audio_write) {
+        uint32_t slot = machine->audio_read % MACHINE_AUDIO_FRAMES;
+        frames[count * 2] = machine->audio[slot * 2];
+        frames[count * 2 + 1] = machine->audio[slot * 2 + 1];
+        machine->audio_read++;
+        count++;
+    }
+    *rate = machine->audio_rate;
+    return count;
+}
+
+static void power_off(void *context) {
+    machine_t *machine = context;
+    machine->powered_off = true;
+    machine->cpu.yield = true;
+}
+
+bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path) {
+    memset(machine, 0, sizeof *machine);
+    machine->rom = malloc(MACHINE_ROM_SIZE);
+    machine->dram_size = MACHINE_DRAM_SIZE;
+    machine->dram = calloc(1, machine->dram_size);
+    if (!machine->rom || !machine->dram) return false;
+    memset(machine->rom, 0xFF, MACHINE_ROM_SIZE);
+    FILE *file = fopen(rom_path, "rb");
+    if (!file) return false;
+    size_t loaded = fread(machine->rom, 1, MACHINE_ROM_SIZE, file);
+    fclose(file);
+    if (!loaded) return false;
+    if (eeprom_path) {
+        file = fopen(eeprom_path, "rb");
+        if (!file) return false;
+        loaded = fread(machine->eeprom.data, 1, sizeof machine->eeprom.data, file);
+        fclose(file);
+        if (loaded != sizeof machine->eeprom.data) return false;
+    }
+    memset(machine->open_bus, 0xFF, sizeof machine->open_bus);
+    machine->cpu.bus = (arm_bus_t){ .context = machine, .read = bus_read, .write = bus_write, .page = bus_page };
+    machine->soc.cpu_hz = MACHINE_CPU_HZ;
+    machine->soc.board = (sa1110_board_t){ .context = machine, .gpio_changed = soc_gpio_changed, .ssp_exchange = soc_ssp_exchange,
+                                            .power_off = power_off };
+    machine->sa1111.board = (sa1111_board_t){
+        .context = machine, .ssp_exchange = sa1111_ssp_exchange, .interrupt_changed = sa1111_interrupt_changed,
+        .gpio_changed = sa1111_gpio_changed, .now = machine_now, .cpu_hz = MACHINE_CPU_HZ, .dram_read = dram_read,
+        .audio = audio_output,
+    };
+    machine_reset(machine);
+    optimiser_init(&machine->optimiser, &machine->cpu);
+    return true;
+}
+
+void machine_set_optimisations(machine_t *machine, bool enabled) {
+    optimiser_set_enabled(&machine->optimiser, enabled);
+}
+
+void machine_free(machine_t *machine) {
+    free(machine->rom);
+    free(machine->dram);
+}
+
+void machine_reset(machine_t *machine) {
+    arm_reset(&machine->cpu);
+    sa1110_reset(&machine->soc, machine->cpu.cycles);
+    sa1111_reset(&machine->sa1111);
+    sed1356_reset(&machine->display);
+    mcu_reset(&machine->mcu);
+    update_mcu_lines(machine);
+    machine->powered_off = false;
+    machine->reset_requested = false;
+}
+
+void machine_run(machine_t *machine, uint64_t cycles) {
+    arm_cpu_t *cpu = &machine->cpu;
+    uint64_t end = cpu->cycles + cycles;
+    while (cpu->cycles < end && !machine->powered_off) {
+        sa1110_advance(&machine->soc, cpu->cycles);
+        sa1111_advance(&machine->sa1111, cpu->cycles);
+        pen_tick(machine);
+        update_lines(machine);
+        if (cpu->waiting && sa1110_wakes_idle(&machine->soc)) cpu->waiting = false;
+        uint64_t next = sa1110_next_event(&machine->soc, cpu->cycles);
+        if (machine->mcu.pen_down && machine->pen_next_sample < next) next = machine->pen_next_sample;
+        uint64_t audio_event = sa1111_next_event(&machine->sa1111);
+        if (audio_event < next) next = audio_event;
+        if (next > end) next = end;
+        if (next <= cpu->cycles) next = cpu->cycles + 1;
+        optimiser_set_deadline(&machine->optimiser, next);
+        arm_run(cpu, next);
+        machine->events++;
+    }
+}
+
+double machine_seconds(const machine_t *machine) {
+    return (double)machine->cpu.cycles / MACHINE_CPU_HZ;
+}
