@@ -14,6 +14,7 @@
 #include "app/serial_service.h"
 #include "app/view.h"
 #include "core/agent.h"
+#include "core/gdb.h"
 #include "core/machine.h"
 #include "core/state.h"
 #include "rapi/rapi.h"
@@ -28,6 +29,7 @@ typedef struct {
     launch_t launch;
     machine_t machine;
     agent_t *agent;
+    gdb_t *debugger;
     serial_service_t serial;
     desktop_t *desktop;
     char state_path[1024];
@@ -134,15 +136,18 @@ static void step_timers(app_t *app) {
 
 static void step_machine(app_t *app, double elapsed) {
     if (app->agent) agent_poll(app->agent, &app->machine.mailbox);
+    if (app->debugger) gdb_service(app->debugger);
+    if (app->debugger && gdb_halted(app->debugger)) return;
     pen_queue_run(&app->pen, &app->machine);
     machine_run(&app->machine, (uint64_t)(elapsed * MACHINE_CPU_HZ));
+    if (app->debugger) gdb_after_run(app->debugger);
     pen_queue_run(&app->pen, &app->machine);
     serial_service_step(&app->serial, &app->machine, &app->notice);
 }
 
 static void step_desktop(app_t *app) {
     char message[NOTICE_TEXT_CAPACITY];
-    if (serial_service_take_desktop(&app->serial) && app->agent && !machine_agent_running(&app->machine))
+    if (serial_service_take_desktop(&app->serial) && (app->agent || app->debugger) && !machine_agent_running(&app->machine))
         desktop_install_debugmgr(app->desktop);
     if (desktop_take_status(app->desktop, message, sizeof message)) notice_show(&app->notice, message, NOTICE_MEDIUM);
 }
@@ -195,6 +200,18 @@ static bool start_machine(app_t *app) {
         fprintf(stderr, "jornada720: cannot listen on agent socket %s\n", launch->agent_socket);
         return false;
     }
+    if (launch->gdb_process && !launch->gdb_port) {
+        fprintf(stderr, "jornada720: --gdb-process needs --gdb\n");
+        return false;
+    }
+    if (launch->gdb_port) {
+        app->debugger = gdb_create(&app->machine, launch->gdb_port, false, log_stderr);
+        if (!app->debugger) {
+            fprintf(stderr, "jornada720: cannot listen for GDB on port %d\n", launch->gdb_port);
+            return false;
+        }
+        if (launch->gdb_process) gdb_set_process(app->debugger, launch->gdb_process);
+    }
     serial_service_init(&app->serial, launch->tcp_port ? SERIAL_TCP : launch->network ? SERIAL_NETWORK : SERIAL_OFF, launch->tcp_port, log_stderr);
     const char *failure = serial_service_start(&app->serial, &app->machine);
     if (failure) {
@@ -239,6 +256,7 @@ static void shut_down(app_t *app) {
     SDL_DestroyRenderer(app->renderer);
     SDL_DestroyWindow(app->window);
     SDL_Quit();
+    gdb_destroy(app->debugger);
     desktop_destroy(app->desktop);
     serial_service_close(&app->serial);
     agent_destroy(app->agent);

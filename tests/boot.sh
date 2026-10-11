@@ -46,10 +46,12 @@ app_check() {
     rm -rf "$data" "$agent"
     mkdir -p "$data"
     cp "$out/pclink.state" "$data/app.state"
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     HOME="$data" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$data" SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
-        ./jornada720 --state="$data/app.state" --net --agent="$agent" > "$out/app.log" 2>&1 &
+        ./jornada720 --state="$data/app.state" --net --agent="$agent" --gdb=$port > "$out/app.log" 2>&1 &
     app=$!
     if python3 tests/agent_ping.py "$agent" 60 > /dev/null; then echo "ok   app installs debugmgr"; else echo "FAIL app installs debugmgr"; failed=1; fi
+    if python3 tests/gdb_client.py $port > "$out/app_gdb.log" 2>&1; then echo "ok   app gdb stub"; else echo "FAIL app gdb stub"; cat "$out/app_gdb.log"; failed=1; fi
     if kill -0 $app 2>/dev/null; then echo "ok   app runs"; else echo "FAIL app runs"; cat "$out/app.log"; failed=1; return; fi
     kill -TERM $app
     if wait $app; then echo "ok   app quits"; else echo "FAIL app quits"; cat "$out/app.log"; failed=1; fi
