@@ -6,8 +6,9 @@
 #include <stddef.h>
 
 #include "app/desktop.h"
+#include "core/machine.h"
 
-typedef enum { PICK_SAVE_SNAPSHOT = 1, PICK_LOAD_SNAPSHOT, PICK_SEND, PICK_FETCH, PICK_SHARED } pick_kind_t;
+typedef enum { PICK_SAVE_SNAPSHOT = 1, PICK_LOAD_SNAPSHOT, PICK_CARD, PICK_PC_CARD, PICK_SEND, PICK_FETCH, PICK_SHARED } pick_kind_t;
 
 #define PICK_MAX 64
 
@@ -26,4 +27,4 @@ typedef struct {
 void      picks_init(void);
 void      picks_done(void *userdata, const char *const *files, int filter);
 picked_t *picks_take(const SDL_Event *event);
-void      picks_handle_drop(dropped_t *dropped, desktop_t *desktop, bool online, char *message, size_t size);
+void      picks_handle_drop(dropped_t *dropped, machine_t *machine, desktop_t *desktop, bool online, char *message, size_t size);

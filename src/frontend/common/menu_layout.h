@@ -66,7 +66,7 @@ static const menu_entry_t MENU_ENTRIES[] = {
     { MENU_ENTRY_ITEM, MENU_NEW_MACHINE, "New Machine" ELLIPSIS, 0, 0 },
     { MENU_ENTRY_ITEM, MENU_MANAGE_MACHINES, "Manage Machines" ELLIPSIS, 0, 0 },
 #ifdef __ANDROID__
-    { MENU_ENTRY_ITEM, MENU_IMPORT, "Import ROMs" ELLIPSIS, 0, 0 },
+    { MENU_ENTRY_ITEM, MENU_IMPORT, "Import ROMs and Cards" ELLIPSIS, 0, 0 },
 #endif
     { MENU_ENTRY_SEPARATOR, 0, NULL, 0, 0 },
     { MENU_ENTRY_ITEM, MENU_PAUSE, "Pause", 'p', MENU_KEY_PRIMARY },
@@ -118,6 +118,14 @@ static const menu_entry_t MENU_ENTRIES[] = {
 #endif
 
     { MENU_ENTRY_MENU, 0, "Devices", 0, 0 },
+    { MENU_ENTRY_HEADING, 0, "CompactFlash", 0, 0 },
+    { MENU_ENTRY_ITEM, MENU_INSERT_CARD, "Insert Card Image" ELLIPSIS, 'o', MENU_KEY_PRIMARY },
+    { MENU_ENTRY_ITEM, MENU_EJECT_CARD, "Eject Card", 'e', MENU_KEY_PRIMARY },
+    { MENU_ENTRY_SEPARATOR, 0, NULL, 0, 0 },
+    { MENU_ENTRY_HEADING, 0, "PC Card", 0, 0 },
+    { MENU_ENTRY_ITEM, MENU_INSERT_PC_CARD, "Insert Card Image" ELLIPSIS, 'o', MENU_KEY_PRIMARY | MENU_KEY_SHIFT },
+    { MENU_ENTRY_ITEM, MENU_EJECT_PC_CARD, "Eject Card", 'e', MENU_KEY_PRIMARY | MENU_KEY_SHIFT },
+    { MENU_ENTRY_SEPARATOR, 0, NULL, 0, 0 },
     { MENU_ENTRY_HEADING, 0, "Serial Port", 0, 0 },
     { MENU_ENTRY_ITEM, MENU_SERIAL_OFF, "Not Connected", 0, 0 },
     { MENU_ENTRY_ITEM, MENU_SERIAL_NETWORK, "Network (PPP)", 'n', MENU_KEY_PRIMARY | MENU_KEY_SHIFT },

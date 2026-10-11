@@ -135,7 +135,7 @@ static bool poll_host_events(app_t *app) {
         case SDL_EVENT_DROP_COMPLETE:
             if (app->dropped.count) {
                 char message[NOTICE_TEXT_CAPACITY];
-                picks_handle_drop(&app->dropped, app->desktop, serial_service_online(&app->serial) && !desktop_busy(app->desktop), message, sizeof message);
+                picks_handle_drop(&app->dropped, machine, app->desktop, serial_service_online(&app->serial) && !desktop_busy(app->desktop), message, sizeof message);
                 notice_show(&app->notice, message, NOTICE_MEDIUM);
             }
             break;
@@ -473,6 +473,8 @@ int main(int argc, char **argv) {
     if (result) return result;
     if (!open_window(app)) return 1;
     machine_t *machine = app->session.machine;
+    if (app->launch.card && !machine_insert_card(machine, MACHINE_SOCKET_CF, app->launch.card)) fprintf(stderr, "jornada720: cannot open card image %s\n", app->launch.card);
+    if (app->launch.pc_card && !machine_insert_card(machine, MACHINE_SOCKET_PC_CARD, app->launch.pc_card)) fprintf(stderr, "jornada720: cannot open card image %s\n", app->launch.pc_card);
     menu_install(app->window);
     open_audio(app);
     app->running = true;

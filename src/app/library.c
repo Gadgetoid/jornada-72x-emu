@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "app/host.h"
 #include "app/paths.h"
@@ -14,6 +15,7 @@
 #include "util/file.h"
 
 #define IMPORT_MAX         64
+#define CARD_MIN_BYTES     (1024 * 1024)
 #define DEVELOPMENT_ROM    "rom/jornada720.bin"
 #define DEVELOPMENT_EEPROM "rom/jorn720_eeprom.bin"
 
@@ -77,7 +79,8 @@ static void import_picked(void *userdata, const char *const *files, int filter) 
     SDL_SetAtomicInt(&pick->done, 1);
 }
 
-int library_import_files(void) {
+int library_import_files(int *cards) {
+    *cards = 0;
     import_pick_t *pick = calloc(1, sizeof *pick);
     if (!pick) return 0;
     SDL_ShowOpenFileDialog(import_picked, pick, NULL, NULL, 0, NULL, true);
@@ -85,14 +88,23 @@ int library_import_files(void) {
         SDL_Event event;
         if (SDL_WaitEventTimeout(&event, 100) && event.type == SDL_EVENT_QUIT) SDL_PushEvent(&event);
     }
-    char roms[1100];
+    char roms[1100], card_folder[1100];
     rom_folder(roms, sizeof roms);
+    library_folder("cards", card_folder, sizeof card_folder);
     int rom_count = 0;
     for (int i = 0; i < pick->count; i++) {
         char path[1200];
         if (!android_import(pick->uris[i], roms, path, sizeof path)) continue;
-        if (rom_catalog_probe(path)) rom_count++;
-        else if (!rom_catalog_eeprom(path)) remove(path);
+        if (rom_catalog_probe(path)) {
+            rom_count++;
+            continue;
+        }
+        if (rom_catalog_eeprom(path)) continue;
+        struct stat info;
+        char card[1200];
+        snprintf(card, sizeof card, "%s/%s", card_folder, file_leaf_name(path));
+        if (stat(path, &info) == 0 && info.st_size >= CARD_MIN_BYTES && info.st_size % 512 == 0 && rename(path, card) == 0) (*cards)++;
+        else remove(path);
     }
     free(pick);
     return rom_count;
@@ -104,12 +116,13 @@ bool library_first_run_import(void) {
         { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit" },
         { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Choose Files" },
     };
-    const SDL_MessageBoxData dialog = { SDL_MESSAGEBOX_INFORMATION, NULL, "Import ROM",
-                                        "Choose a Jornada 720 ROM image, and its configuration EEPROM if you have one.",
+    const SDL_MessageBoxData dialog = { SDL_MESSAGEBOX_INFORMATION, NULL, "Import ROM and Cards",
+                                        "Choose a Jornada 720 ROM image, and its configuration EEPROM if you have one. Card images can be chosen at the same time.",
                                         2, buttons, NULL };
     int chosen = 0;
     if (!SDL_ShowMessageBox(&dialog, &chosen) || chosen != 1) return false;
-    library_import_files();
+    int cards;
+    library_import_files(&cards);
     return true;
 }
 #endif

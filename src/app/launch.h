@@ -11,6 +11,7 @@ typedef struct {
     bool fresh, verbose;
     int gdb_port;
     const char   *gdb_process;
+    const char   *card, *pc_card;
     const char   *agent_socket;
 } launch_t;
 

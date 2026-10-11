@@ -197,10 +197,10 @@ void app_command(app_t *app, int item, int *switch_to, bool *events_seen) {
         break;
 #ifdef __ANDROID__
     case MENU_IMPORT: {
-        int imported = library_import_files();
+        int cards, imported = library_import_files(&cards);
         library_find_roms(&app->roms);
         char message[160];
-        snprintf(message, sizeof message, "imported %d ROMs", imported);
+        snprintf(message, sizeof message, "imported %d ROMs and %d cards", imported, cards);
         notice_show(&app->notice, message, NOTICE_MEDIUM);
         break;
     }
@@ -260,6 +260,19 @@ void app_command(app_t *app, int item, int *switch_to, bool *events_seen) {
         notice_show(&app->notice, serial_service_select(&app->serial, machine, mode, NULL), NOTICE_LONG);
         break;
     }
+    case MENU_INSERT_CARD:
+    case MENU_INSERT_PC_CARD: {
+        static const SDL_DialogFileFilter filters[] = { { "Card images", "img;bin;raw" }, { "All files", "*" } };
+        char folder[1100];
+        library_folder("cards", folder, sizeof folder);
+        SDL_ShowOpenFileDialog(picks_done, (void *)(intptr_t)(item == MENU_INSERT_CARD ? PICK_CARD : PICK_PC_CARD), app->window, filters, 2, folder, false);
+        break;
+    }
+    case MENU_EJECT_CARD:
+    case MENU_EJECT_PC_CARD:
+        machine_eject_card(machine, item == MENU_EJECT_CARD ? MACHINE_SOCKET_CF : MACHINE_SOCKET_PC_CARD);
+        notice_show(&app->notice, "card ejected", NOTICE_SHORT);
+        break;
     case MENU_SEND_FILES:
         SDL_ShowOpenFileDialog(picks_done, (void *)(intptr_t)PICK_SEND, app->window, NULL, 0, NULL, true);
         break;
@@ -334,7 +347,10 @@ void app_handle_picked(app_t *app) {
     machine_t *machine = app->session.machine;
     settings_t *settings = &app->settings;
     picked_t *picked = app->picked;
-    if (picked->kind == PICK_SAVE_SNAPSHOT) {
+    if (picked->kind == PICK_CARD || picked->kind == PICK_PC_CARD) {
+        int socket = picked->kind == PICK_CARD ? MACHINE_SOCKET_CF : MACHINE_SOCKET_PC_CARD;
+        notice_show(&app->notice, machine_insert_card(machine, socket, picked->paths[0]) ? "card inserted" : "could not open card image", NOTICE_SHORT);
+    } else if (picked->kind == PICK_SAVE_SNAPSHOT) {
         char path[1100];
         snprintf(path, sizeof path, "%s%s", picked->paths[0], file_has_extension(picked->paths[0], ".state") ? "" : ".state");
         bool saved = machine_save(machine, path, (int64_t)time(NULL));
@@ -396,6 +412,8 @@ void app_update_menus(app_t *app, bool device_online) {
         menu_set_checked(baud_item, link_baud && link_baud * 20 > speed * 19 && link_baud * 20 < speed * 21);
     }
     menu_set_checked(MENU_NETWORK_RAPI, settings->network_rapi != 0);
+    menu_set_enabled(MENU_EJECT_CARD, machine_card_inserted(machine, MACHINE_SOCKET_CF));
+    menu_set_enabled(MENU_EJECT_PC_CARD, machine_card_inserted(machine, MACHINE_SOCKET_PC_CARD));
     menu_set_enabled(MENU_SERIAL_NETWORK, net_gateway_available());
     menu_set_checked(MENU_SERIAL_OFF, serial->link.mode == SERIAL_OFF);
     menu_set_checked(MENU_SERIAL_NETWORK, serial->link.mode == SERIAL_NETWORK);
