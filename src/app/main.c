@@ -30,6 +30,35 @@ typedef struct {
     double changed_at;
 } pen_queue_t;
 
+typedef struct {
+    const char *rom;
+    const char *eeprom;
+    const char *state_override;
+    bool fresh;
+    bool optimisations;
+    machine_t machine;
+    char state_path[1024];
+    char old_path[1040];
+    state_result_t loaded;
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    SDL_Texture *texture;
+    uint32_t pixels[SCREEN_WIDTH * SCREEN_HEIGHT];
+    SDL_AudioStream *audio;
+    SDL_AudioSpec audio_spec;
+    int16_t audio_frames[MACHINE_AUDIO_FRAMES * 2];
+    bool muted;
+    bool running;
+    bool button_down;
+    pen_queue_t pen;
+    uint64_t last_frame;
+    double frequency;
+    double clock_now;
+    double next_autosave;
+    char notice[96];
+    double notice_until;
+} app_t;
+
 static void pen_queue_push(pen_queue_t *queue, bool down, int x, int y) {
     if (queue->count) {
         pen_event_t *last = &queue->events[(queue->head + queue->count - 1) % PEN_QUEUE_SIZE];
@@ -61,14 +90,10 @@ static void pen_queue_run(pen_queue_t *queue, machine_t *machine) {
     }
 }
 
-static SDL_Window *window;
-static char notice[96];
-static double notice_until;
-
-static void show_notice(const char *text, double now) {
-    snprintf(notice, sizeof notice, "Jornada 720 - %s", text);
-    SDL_SetWindowTitle(window, notice);
-    notice_until = now + NOTICE_SECONDS;
+static void show_notice(app_t *app, const char *text) {
+    snprintf(app->notice, sizeof app->notice, "Jornada 720 - %s", text);
+    SDL_SetWindowTitle(app->window, app->notice);
+    app->notice_until = app->clock_now + NOTICE_SECONDS;
 }
 
 static void print_status(machine_t *machine) {
@@ -115,160 +140,201 @@ static int jornada_key(SDL_Scancode scancode) {
     return -1;
 }
 
-int main(int argc, char **argv) {
-    const char *rom = "rom/jornada720.bin";
-    const char *eeprom = "rom/jorn720_eeprom.bin";
-    bool fresh = false;
-    bool optimisations = false;
-    const char *state_override = NULL;
+static bool handle_command(app_t *app, SDL_Scancode scancode) {
+    machine_t *machine = &app->machine;
+    switch (scancode) {
+    case SDL_SCANCODE_Q:
+        app->running = false;
+        return true;
+    case SDL_SCANCODE_R:
+        machine_reset(machine);
+        show_notice(app, "reset");
+        return true;
+    case SDL_SCANCODE_S:
+        show_notice(app, state_save(machine, app->state_path, (uint64_t)time(NULL)) ? "state saved" : "cannot save state");
+        return true;
+    case SDL_SCANCODE_L:
+        show_notice(app, state_describe(state_load(machine, app->state_path, (uint64_t)time(NULL))));
+        return true;
+    case SDL_SCANCODE_D:
+        print_status(machine);
+        return true;
+    case SDL_SCANCODE_M:
+        app->muted = !app->muted;
+        show_notice(app, app->muted ? "sound off" : "sound on");
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void handle_key(app_t *app, const SDL_KeyboardEvent *key) {
+    if (key->repeat) return;
+    if (key->down && (key->mod & SDL_KMOD_GUI) && handle_command(app, key->scancode)) return;
+    int code = jornada_key(key->scancode);
+    if (code >= 0) machine_key(&app->machine, (uint8_t)code, key->down);
+}
+
+static void handle_mouse(app_t *app, SDL_Event *event) {
+    SDL_ConvertEventToRenderCoordinates(app->renderer, event);
+    if (event->type == SDL_EVENT_MOUSE_MOTION) {
+        if (app->button_down) pen_queue_push(&app->pen, true, (int)event->motion.x, (int)event->motion.y);
+    } else if (event->button.button == SDL_BUTTON_LEFT) {
+        app->button_down = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        pen_queue_push(&app->pen, app->button_down, (int)event->button.x, (int)event->button.y);
+    }
+}
+
+static void poll_host_events(app_t *app) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+        case SDL_EVENT_QUIT:
+            app->running = false;
+            break;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            handle_key(app, &event.key);
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+        case SDL_EVENT_MOUSE_MOTION:
+            handle_mouse(app, &event);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void step_timers(app_t *app) {
+    if (app->notice_until && app->clock_now > app->notice_until) {
+        app->notice_until = 0;
+        SDL_SetWindowTitle(app->window, "Jornada 720");
+    }
+    if (app->clock_now >= app->next_autosave) {
+        app->next_autosave = app->clock_now + AUTOSAVE_SECONDS;
+        state_save(&app->machine, app->state_path, (uint64_t)time(NULL));
+    }
+}
+
+static void step_machine(app_t *app, double elapsed) {
+    pen_queue_run(&app->pen, &app->machine);
+    machine_run(&app->machine, (uint64_t)(elapsed * MACHINE_CPU_HZ));
+    pen_queue_run(&app->pen, &app->machine);
+}
+
+static void step_audio(app_t *app) {
+    uint32_t audio_rate;
+    uint32_t audio_count = machine_audio_take(&app->machine, app->audio_frames, MACHINE_AUDIO_FRAMES, &audio_rate);
+    if (!app->audio || !audio_count || app->muted || !audio_rate) return;
+    if ((int)audio_rate != app->audio_spec.freq) {
+        app->audio_spec.freq = (int)audio_rate;
+        SDL_SetAudioStreamFormat(app->audio, &app->audio_spec, NULL);
+    }
+    SDL_PutAudioStreamData(app->audio, app->audio_frames, (int)(audio_count * 4));
+}
+
+static void sync_screen(app_t *app) {
+    sed1356_render(&app->machine.display, app->pixels, SCREEN_WIDTH, SCREEN_HEIGHT);
+    SDL_UpdateTexture(app->texture, NULL, app->pixels, SCREEN_WIDTH * (int)sizeof app->pixels[0]);
+    SDL_RenderClear(app->renderer);
+    SDL_RenderTexture(app->renderer, app->texture, NULL, NULL);
+    SDL_RenderPresent(app->renderer);
+}
+
+static void run_frame(app_t *app) {
+    poll_host_events(app);
+    uint64_t now = SDL_GetPerformanceCounter();
+    double elapsed = (double)(now - app->last_frame) / app->frequency;
+    app->last_frame = now;
+    app->clock_now += elapsed;
+    if (elapsed > MAX_FRAME_SECONDS) elapsed = MAX_FRAME_SECONDS;
+    step_timers(app);
+    step_machine(app, elapsed);
+    step_audio(app);
+    sync_screen(app);
+}
+
+static void load_launch(app_t *app, int argc, char **argv) {
+    app->rom = "rom/jornada720.bin";
+    app->eeprom = "rom/jorn720_eeprom.bin";
     int positional = 0;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--fresh")) fresh = true;
-        else if (!strcmp(argv[i], "--optimisations")) optimisations = true;
-        else if (!strncmp(argv[i], "--state=", 8)) state_override = argv[i] + 8;
-        else if (positional++ == 0) rom = argv[i];
-        else eeprom = argv[i];
+        if (!strcmp(argv[i], "--fresh")) app->fresh = true;
+        else if (!strcmp(argv[i], "--optimisations")) app->optimisations = true;
+        else if (!strncmp(argv[i], "--state=", 8)) app->state_override = argv[i] + 8;
+        else if (positional++ == 0) app->rom = argv[i];
+        else app->eeprom = argv[i];
     }
-    static machine_t machine;
-    if (!machine_init(&machine, rom, eeprom)) {
-        fprintf(stderr, "cannot load %s or %s\n", rom, eeprom);
-        return 1;
+}
+
+static bool start_machine(app_t *app) {
+    if (!machine_init(&app->machine, app->rom, app->eeprom)) {
+        fprintf(stderr, "cannot load %s or %s\n", app->rom, app->eeprom);
+        return false;
     }
     char *preferences = SDL_GetPrefPath(NULL, "jornada-72x-emu");
-    char state_path[1024], old_path[1040];
-    if (state_override) snprintf(state_path, sizeof state_path, "%s", state_override);
-    else snprintf(state_path, sizeof state_path, "%sstate.bin", preferences ? preferences : "");
-    snprintf(old_path, sizeof old_path, "%s.old", state_path);
+    if (app->state_override) snprintf(app->state_path, sizeof app->state_path, "%s", app->state_override);
+    else snprintf(app->state_path, sizeof app->state_path, "%sstate.bin", preferences ? preferences : "");
+    snprintf(app->old_path, sizeof app->old_path, "%s.old", app->state_path);
     SDL_free(preferences);
-    state_result_t loaded = fresh ? STATE_MISSING : state_load(&machine, state_path, (uint64_t)time(NULL));
-    machine_set_optimisations(&machine, optimisations);
-    if (loaded == STATE_UNREADABLE || loaded == STATE_INCOMPATIBLE || loaded == STATE_WRONG_ROM) rename(state_path, old_path);
+    app->loaded = app->fresh ? STATE_MISSING : state_load(&app->machine, app->state_path, (uint64_t)time(NULL));
+    machine_set_optimisations(&app->machine, app->optimisations);
+    if (app->loaded == STATE_UNREADABLE || app->loaded == STATE_INCOMPATIBLE || app->loaded == STATE_WRONG_ROM)
+        rename(app->state_path, app->old_path);
+    return true;
+}
+
+static bool open_window(app_t *app) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
-        return 1;
+        return false;
     }
-    SDL_Renderer *renderer;
-    if (!SDL_CreateWindowAndRenderer("Jornada 720", SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_RESIZABLE, &window,
-                                     &renderer)) {
+    if (!SDL_CreateWindowAndRenderer("Jornada 720", SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_RESIZABLE, &app->window,
+                                     &app->renderer)) {
         fprintf(stderr, "SDL_CreateWindowAndRenderer: %s\n", SDL_GetError());
-        return 1;
+        return false;
     }
-    SDL_SetRenderLogicalPresentation(renderer, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
-    SDL_SetRenderVSync(renderer, 1);
-    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_WIDTH,
-                                             SCREEN_HEIGHT);
-    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    static uint32_t pixels[SCREEN_WIDTH * SCREEN_HEIGHT];
-    SDL_AudioSpec audio_spec = { SDL_AUDIO_S16LE, 2, 22050 };
-    SDL_AudioStream *audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio_spec, NULL, NULL);
-    if (audio) SDL_ResumeAudioStreamDevice(audio);
+    SDL_SetRenderLogicalPresentation(app->renderer, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+    SDL_SetRenderVSync(app->renderer, 1);
+    app->texture = SDL_CreateTexture(app->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_WIDTH,
+                                     SCREEN_HEIGHT);
+    SDL_SetTextureScaleMode(app->texture, SDL_SCALEMODE_NEAREST);
+    return true;
+}
+
+static void open_audio(app_t *app) {
+    app->audio_spec = (SDL_AudioSpec){ SDL_AUDIO_S16LE, 2, 22050 };
+    app->audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &app->audio_spec, NULL, NULL);
+    if (app->audio) SDL_ResumeAudioStreamDevice(app->audio);
     else fprintf(stderr, "no audio: %s\n", SDL_GetError());
-    bool muted = false;
-    static int16_t audio_frames[MACHINE_AUDIO_FRAMES * 2];
-    bool running = true, button_down = false;
-    pen_queue_t pen = { 0 };
-    uint64_t last = SDL_GetPerformanceCounter();
-    double frequency = (double)SDL_GetPerformanceFrequency();
-    double clock_now = 0, next_autosave = AUTOSAVE_SECONDS;
-    if (loaded != STATE_MISSING || !fresh) show_notice(state_describe(loaded), 0);
-    while (running) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            switch (event.type) {
-            case SDL_EVENT_QUIT:
-                running = false;
-                break;
-            case SDL_EVENT_KEY_DOWN:
-            case SDL_EVENT_KEY_UP: {
-                if (event.key.repeat) break;
-                if (event.type == SDL_EVENT_KEY_DOWN && (event.key.mod & SDL_KMOD_GUI) && event.key.scancode == SDL_SCANCODE_Q) {
-                    running = false;
-                    break;
-                }
-                if (event.type == SDL_EVENT_KEY_DOWN && (event.key.mod & SDL_KMOD_GUI)) {
-                    switch (event.key.scancode) {
-                    case SDL_SCANCODE_R:
-                        machine_reset(&machine);
-                        show_notice("reset", clock_now);
-                        break;
-                    case SDL_SCANCODE_S:
-                        show_notice(state_save(&machine, state_path, (uint64_t)time(NULL)) ? "state saved" : "cannot save state", clock_now);
-                        break;
-                    case SDL_SCANCODE_L:
-                        show_notice(state_describe(state_load(&machine, state_path, (uint64_t)time(NULL))), clock_now);
-                        break;
-                    case SDL_SCANCODE_D:
-                        print_status(&machine);
-                        break;
-                    case SDL_SCANCODE_M:
-                        muted = !muted;
-                        show_notice(muted ? "sound off" : "sound on", clock_now);
-                        break;
-                    default:
-                        break;
-                    }
-                    if (event.key.scancode == SDL_SCANCODE_R || event.key.scancode == SDL_SCANCODE_S
-                        || event.key.scancode == SDL_SCANCODE_L || event.key.scancode == SDL_SCANCODE_D
-                        || event.key.scancode == SDL_SCANCODE_M)
-                        break;
-                }
-                int code = jornada_key(event.key.scancode);
-                if (code >= 0) machine_key(&machine, (uint8_t)code, event.type == SDL_EVENT_KEY_DOWN);
-                break;
-            }
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-            case SDL_EVENT_MOUSE_MOTION: {
-                SDL_ConvertEventToRenderCoordinates(renderer, &event);
-                if (event.type == SDL_EVENT_MOUSE_MOTION) {
-                    if (button_down) pen_queue_push(&pen, true, (int)event.motion.x, (int)event.motion.y);
-                } else if (event.button.button == SDL_BUTTON_LEFT) {
-                    button_down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-                    pen_queue_push(&pen, button_down, (int)event.button.x, (int)event.button.y);
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-        uint64_t now = SDL_GetPerformanceCounter();
-        double elapsed = (double)(now - last) / frequency;
-        last = now;
-        clock_now += elapsed;
-        if (elapsed > MAX_FRAME_SECONDS) elapsed = MAX_FRAME_SECONDS;
-        if (notice_until && clock_now > notice_until) {
-            notice_until = 0;
-            SDL_SetWindowTitle(window, "Jornada 720");
-        }
-        if (clock_now >= next_autosave) {
-            next_autosave = clock_now + AUTOSAVE_SECONDS;
-            state_save(&machine, state_path, (uint64_t)time(NULL));
-        }
-        pen_queue_run(&pen, &machine);
-        machine_run(&machine, (uint64_t)(elapsed * MACHINE_CPU_HZ));
-        pen_queue_run(&pen, &machine);
-        uint32_t audio_rate;
-        uint32_t audio_count = machine_audio_take(&machine, audio_frames, MACHINE_AUDIO_FRAMES, &audio_rate);
-        if (audio && audio_count && !muted && audio_rate) {
-            if ((int)audio_rate != audio_spec.freq) {
-                audio_spec.freq = (int)audio_rate;
-                SDL_SetAudioStreamFormat(audio, &audio_spec, NULL);
-            }
-            SDL_PutAudioStreamData(audio, audio_frames, (int)(audio_count * 4));
-        }
-        sed1356_render(&machine.display, pixels, SCREEN_WIDTH, SCREEN_HEIGHT);
-        SDL_UpdateTexture(texture, NULL, pixels, SCREEN_WIDTH * (int)sizeof pixels[0]);
-        SDL_RenderClear(renderer);
-        SDL_RenderTexture(renderer, texture, NULL, NULL);
-        SDL_RenderPresent(renderer);
-    }
-    if (!state_save(&machine, state_path, (uint64_t)time(NULL))) fprintf(stderr, "cannot save %s\n", state_path);
-    if (audio) SDL_DestroyAudioStream(audio);
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+}
+
+static void shut_down(app_t *app) {
+    if (!state_save(&app->machine, app->state_path, (uint64_t)time(NULL))) fprintf(stderr, "cannot save %s\n", app->state_path);
+    if (app->audio) SDL_DestroyAudioStream(app->audio);
+    SDL_DestroyTexture(app->texture);
+    SDL_DestroyRenderer(app->renderer);
+    SDL_DestroyWindow(app->window);
     SDL_Quit();
-    machine_free(&machine);
+    machine_free(&app->machine);
+}
+
+int main(int argc, char **argv) {
+    app_t *app = calloc(1, sizeof *app);
+    if (!app) return 1;
+    load_launch(app, argc, argv);
+    if (!start_machine(app)) return 1;
+    if (!open_window(app)) return 1;
+    open_audio(app);
+    app->running = true;
+    app->last_frame = SDL_GetPerformanceCounter();
+    app->frequency = (double)SDL_GetPerformanceFrequency();
+    app->next_autosave = AUTOSAVE_SECONDS;
+    if (app->loaded != STATE_MISSING || !app->fresh) show_notice(app, state_describe(app->loaded));
+    while (app->running) run_frame(app);
+    shut_down(app);
+    free(app);
     return 0;
 }
