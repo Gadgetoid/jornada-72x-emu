@@ -34,6 +34,8 @@ endif
 ifeq ($(MENU),macos)
 SRC_MENU  = src/frontend/macos/menu.m src/frontend/macos/dialog.m
 LDFLAGS  += -framework Cocoa
+else ifeq ($(MENU),android)
+SRC_MENU  = src/frontend/android/menu.c src/frontend/android/dialog.c src/frontend/android/keystrip.c src/frontend/android/list.c src/frontend/android/text.c src/frontend/android/toast.c src/frontend/common/menu_state.c src/frontend/android/android.c src/vendor/truetype.c
 else
 SRC_MENU  = src/frontend/linux/menu.c src/frontend/linux/dialog.c src/frontend/linux/ui.c src/frontend/common/menu_state.c src/vendor/truetype.c
 endif
@@ -66,6 +68,9 @@ all: $(HEADLESS) $(ARMSTEP) $(PROG) $(RAPI_TOOL)
 
 $(PROG): $(OBJ_APP)
 	$(CC) -o $@ $^ $(LDFLAGS) $(NET_LIBS)
+
+$(BUILD)/libmain.so: $(OBJ_APP)
+	$(CC) -shared -Wl,--no-undefined -o $@ $^ $(LDFLAGS) $(NET_LIBS)
 
 $(BUILD)/src/app/%.o $(BUILD)/src/frontend/%.o: CFLAGS += $(SDL_CFLAGS)
 $(BUILD)/src/vendor/%.o: CFLAGS += -w
@@ -123,6 +128,15 @@ app: $(PROG) $(RAPI_TOOL) icons
 deb:
 	sh tools/mkdeb.sh dist
 
+apk: icons
+	ICONS=$(BUILD)/icons sh tools/mkapk.sh
+
+apk-push:
+	sh tools/mkapk.sh push
+
+apk-install: icons
+	ICONS=$(BUILD)/icons sh tools/mkapk.sh install
+
 test: $(PROG) $(HEADLESS) $(NATIVECHECK)
 	./$(NATIVECHECK)
 	tests/boot.sh
@@ -139,6 +153,6 @@ format-check:
 clean:
 	rm -rf $(BUILD) $(HEADLESS) $(PROG) $(RAPI_TOOL) $(APP) dist
 
-.PHONY: all app clean deb debugmgr difftest format format-check icons native-check test FORCE
+.PHONY: all app apk apk-install apk-push clean deb debugmgr difftest format format-check icons native-check test FORCE
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
