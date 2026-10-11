@@ -18,7 +18,7 @@ C_STYLE_SOURCES = $(filter-out src/vendor/%,$(shell git ls-files 'src/**/*.c' 's
 PKG_CONFIG ?= pkg-config
 
 ifeq ($(shell $(PKG_CONFIG) --exists slirp && echo yes),yes)
-SRC_NET  = src/net/net_gateway.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/serial_link.c
+SRC_NET  = src/util/socket_path.c src/net/net_gateway.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/serial_link.c
 CFLAGS  += $(shell $(PKG_CONFIG) --cflags slirp)
 NET_LIBS = $(shell $(PKG_CONFIG) --libs slirp)
 ifeq ($(shell $(PKG_CONFIG) --exists libcurl && echo yes),yes)
@@ -29,7 +29,7 @@ else
 SRC_NET  += src/net/web_proxy_none.c
 endif
 else
-SRC_NET  = src/net/net_gateway_none.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/web_proxy_none.c src/net/serial_link.c
+SRC_NET  = src/util/socket_path.c src/net/net_gateway_none.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/web_proxy_none.c src/net/serial_link.c
 endif
 
 SRC_RAPI = src/rapi/rapi.c src/rapi/rapi_load.c src/rapi/rapi_setup.c src/rapi/rapi_sync.c src/rapi/debugmgr_image.c
