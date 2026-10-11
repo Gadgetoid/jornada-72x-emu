@@ -182,6 +182,10 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
         machine->pen_next_sample = header.pen_next_sample;
         machine->powered_off = header.powered_off;
         machine->unknown_count = 0;
+        machine->mailbox_received_at = 0;
+        machine->mailbox_fault_tries = 0;
+        mailbox_clear_queue(&machine->mailbox.to_guest_from_emulator);
+        mailbox_clear_queue(&machine->mailbox.to_emulator);
         if (host_time > header.host_time) machine->soc.rcnr += (uint32_t)(host_time - header.host_time);
     }
     free(cpu);

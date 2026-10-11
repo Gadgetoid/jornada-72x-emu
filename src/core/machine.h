@@ -5,6 +5,7 @@
 
 #include "core/arm.h"
 #include "core/eeprom.h"
+#include "core/mailbox.h"
 #include "core/mcu.h"
 #include "core/optimiser.h"
 #include "core/sa1110.h"
@@ -52,6 +53,10 @@ struct machine {
     int16_t audio[MACHINE_AUDIO_FRAMES * 2];
     uint32_t audio_read, audio_write;
     uint32_t audio_rate;
+    mailbox_t mailbox;
+    uint32_t mailbox_fault_va;
+    int mailbox_fault_tries;
+    uint64_t mailbox_received_at;
 };
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
@@ -63,5 +68,6 @@ void machine_key(machine_t *machine, uint8_t scancode, bool down);
 void machine_pen(machine_t *machine, bool down, uint16_t x, uint16_t y);
 void machine_touch(machine_t *machine, bool down, int x, int y);
 uint32_t machine_audio_take(machine_t *machine, int16_t *frames, uint32_t max_frames, uint32_t *rate);
+bool machine_agent_running(const machine_t *machine);
 void machine_print_status(const machine_t *machine, FILE *out);
 double machine_seconds(const machine_t *machine);

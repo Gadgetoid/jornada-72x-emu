@@ -237,6 +237,43 @@ static void power_off(void *context) {
     machine->cpu.yield = true;
 }
 
+#define MAILBOX_FAULT_TRIES 4
+#define AGENT_POLL_WINDOW   (MACHINE_CPU_HZ / 2)
+
+static bool mailbox_copy(void *context, uint32_t va, uint8_t *data, uint32_t length, bool write) {
+    machine_t *machine = context;
+    uint8_t *host = arm_map_virtual(&machine->cpu, va, write, true);
+    if (!host) return false;
+    if (write) memcpy(host, data, length);
+    else memcpy(data, host, length);
+    return true;
+}
+
+static bool on_swi(void *context, uint32_t comment) {
+    machine_t *machine = context;
+    arm_cpu_t *cpu = &machine->cpu;
+    if (comment != MAILBOX_SWI_COMMENT || (cpu->cpsr & ARM_PSR_MODE) != ARM_MODE_USR) return false;
+    if (cpu->r[0] == MAILBOX_RECV) machine->mailbox_received_at = cpu->cycles;
+    uint32_t fault_va;
+    if (mailbox_trap(&machine->mailbox, cpu, mailbox_copy, machine, &fault_va)) {
+        machine->mailbox_fault_tries = 0;
+        return true;
+    }
+    if (fault_va != machine->mailbox_fault_va) machine->mailbox_fault_tries = 0;
+    machine->mailbox_fault_va = fault_va;
+    if (++machine->mailbox_fault_tries > MAILBOX_FAULT_TRIES) {
+        machine->mailbox_fault_tries = 0;
+        cpu->r[0] = (uint32_t)-1;
+        return true;
+    }
+    arm_raise_data_abort(cpu, fault_va, cpu->r[0] == MAILBOX_RECV);
+    return true;
+}
+
+bool machine_agent_running(const machine_t *machine) {
+    return machine->mailbox_received_at && machine->cpu.cycles - machine->mailbox_received_at < AGENT_POLL_WINDOW;
+}
+
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path) {
     memset(machine, 0, sizeof *machine);
     machine->rom = malloc(MACHINE_ROM_SIZE);
@@ -258,6 +295,7 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
     }
     memset(machine->open_bus, 0xFF, sizeof machine->open_bus);
     machine->cpu.bus = (arm_bus_t){ .context = machine, .read = bus_read, .write = bus_write, .page = bus_page };
+    machine->cpu.on_swi = on_swi;
     machine->soc.cpu_hz = MACHINE_CPU_HZ;
     machine->soc.board = (sa1110_board_t){ .context = machine, .gpio_changed = soc_gpio_changed, .ssp_exchange = soc_ssp_exchange,
                                            .power_off = power_off };
@@ -276,6 +314,7 @@ void machine_set_optimisations(machine_t *machine, bool enabled) {
 }
 
 void machine_free(machine_t *machine) {
+    mailbox_clear(&machine->mailbox);
     free(machine->rom);
     free(machine->dram);
 }
@@ -289,6 +328,8 @@ void machine_reset(machine_t *machine) {
     update_mcu_lines(machine);
     machine->powered_off = false;
     machine->reset_requested = false;
+    mailbox_clear(&machine->mailbox);
+    machine->mailbox_received_at = 0;
 }
 
 void machine_run(machine_t *machine, uint64_t cycles) {

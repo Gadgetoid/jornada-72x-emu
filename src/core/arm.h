@@ -110,6 +110,7 @@ struct arm_cpu {
     const uint8_t *optimiser_filter;
     void *optimiser_context;
     bool (*on_optimiser)(void *context, arm_cpu_t *cpu, uint32_t pc);
+    bool (*on_swi)(void *context, uint32_t comment);
     arm_page_cache_t read_cache[2][ARM_PAGE_CACHE];
     arm_page_cache_t write_cache[2][ARM_PAGE_CACHE];
     arm_page_cache_t fetch_cache[2][ARM_PAGE_CACHE];
@@ -129,6 +130,7 @@ void arm_set_cpsr(arm_cpu_t *cpu, uint32_t value);
 void arm_flush_translations(arm_cpu_t *cpu);
 bool arm_translate(arm_cpu_t *cpu, uint32_t va, bool write, bool user, uint32_t *pa, uint32_t *fault);
 uint8_t *arm_map_virtual(arm_cpu_t *cpu, uint32_t va, bool write, bool user);
+void arm_raise_data_abort(arm_cpu_t *cpu, uint32_t va, bool write);
 bool arm_read_instruction_virtual(arm_cpu_t *cpu, uint32_t va, uint32_t *value);
 bool arm_read_virtual(arm_cpu_t *cpu, uint32_t va, int size, uint32_t *value);
 bool arm_write_virtual(arm_cpu_t *cpu, uint32_t va, int size, uint32_t value);

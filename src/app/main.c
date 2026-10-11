@@ -11,6 +11,7 @@
 #include "app/notices.h"
 #include "app/paths.h"
 #include "app/view.h"
+#include "core/agent.h"
 #include "core/machine.h"
 #include "core/state.h"
 
@@ -23,6 +24,7 @@
 typedef struct {
     launch_t launch;
     machine_t machine;
+    agent_t *agent;
     char state_path[1024];
     state_result_t loaded;
     SDL_Window *window;
@@ -126,6 +128,7 @@ static void step_timers(app_t *app) {
 }
 
 static void step_machine(app_t *app, double elapsed) {
+    if (app->agent) agent_poll(app->agent, &app->machine.mailbox);
     pen_queue_run(&app->pen, &app->machine);
     machine_run(&app->machine, (uint64_t)(elapsed * MACHINE_CPU_HZ));
     pen_queue_run(&app->pen, &app->machine);
@@ -155,6 +158,10 @@ static void run_frame(app_t *app) {
     view_render(app->view, &app->machine.display);
 }
 
+static void log_stderr(const char *message) {
+    fputs(message, stderr);
+}
+
 static bool start_machine(app_t *app) {
     launch_t *launch = &app->launch;
     if (!machine_init(&app->machine, launch->rom, launch->eeprom)) {
@@ -169,6 +176,10 @@ static bool start_machine(app_t *app) {
         char old_path[sizeof app->state_path + 8];
         snprintf(old_path, sizeof old_path, "%s.old", app->state_path);
         rename(app->state_path, old_path);
+    }
+    if (launch->agent_socket && !(app->agent = agent_create(launch->agent_socket, log_stderr))) {
+        fprintf(stderr, "jornada720: cannot listen on agent socket %s\n", launch->agent_socket);
+        return false;
     }
     return true;
 }
@@ -205,6 +216,7 @@ static void shut_down(app_t *app) {
     SDL_DestroyRenderer(app->renderer);
     SDL_DestroyWindow(app->window);
     SDL_Quit();
+    agent_destroy(app->agent);
     machine_free(&app->machine);
 }
 

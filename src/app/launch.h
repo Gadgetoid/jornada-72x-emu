@@ -3,7 +3,7 @@
 #include <stdbool.h>
 
 typedef struct {
-    const char *rom, *eeprom, *state_file;
+    const char *rom, *eeprom, *state_file, *agent_socket;
     bool fresh, optimisations;
 } launch_t;
 

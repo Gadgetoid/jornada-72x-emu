@@ -316,6 +316,12 @@ static void data_abort(arm_cpu_t *cpu, uint32_t va, uint32_t fault) {
     raise_exception(cpu, ARM_MODE_ABT, VECTOR_DATA_ABORT, cpu->last_pc + 8);
 }
 
+void arm_raise_data_abort(arm_cpu_t *cpu, uint32_t va, bool write) {
+    uint32_t mva = modified_address(cpu, va), fault = FAULT_EXTERNAL;
+    lookup(cpu, write ? ACCESS_WRITE : ACCESS_READ, mva, !privileged(cpu), &fault);
+    data_abort(cpu, mva, fault);
+}
+
 static void undefined(arm_cpu_t *cpu, uint32_t op) {
     cpu->undefined_count++;
     if (cpu->on_undefined) cpu->on_undefined(cpu->hook_context, cpu->last_pc, op);
@@ -836,7 +842,10 @@ static void execute(arm_cpu_t *cpu, uint32_t op) {
         undefined(cpu, op);
         break;
     default:
-        if (op & (1u << 24)) raise_exception(cpu, ARM_MODE_SVC, VECTOR_SWI, cpu->last_pc + 4);
+        if (op & (1u << 24)) {
+            if (!cpu->on_swi || !cpu->on_swi(cpu->bus.context, op & 0x00FFFFFFu))
+                raise_exception(cpu, ARM_MODE_SVC, VECTOR_SWI, cpu->last_pc + 4);
+        }
         else if (op & 0x10) coprocessor_register(cpu, op);
         else undefined(cpu, op);
         break;

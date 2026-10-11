@@ -1,3 +1,4 @@
+#include "core/agent.h"
 #include "core/machine.h"
 #include "core/state.h"
 #include "util/png.h"
@@ -49,11 +50,13 @@ typedef struct {
     uint32_t stop_at;
     uint32_t count_pc;
     bool count_pc_enabled;
+    const char *agent_socket;
 } options_t;
 
 typedef struct {
     options_t options;
     machine_t machine;
+    agent_t *agent;
     FILE *trace;
     bool stopped;
     int exceptions_shown;
@@ -192,6 +195,7 @@ static void usage(void) {
             "  --trace=PATH       write a per-instruction trace\n"
             "  --trace-from=N     start tracing after N instructions\n"
             "  --stop-at=PC       stop when PC is reached\n"
+            "  --agent=SOCKET     pass messages between a guest agent's swi 0x51CE mailbox and one client on this Unix socket\n"
             "  --count-pc=PC      count exact executions at a virtual address\n");
 }
 
@@ -234,6 +238,7 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--exceptions=", 13)) options->exceptions = atoi(arg + 13);
         else if (!strncmp(arg, "--trace=", 8)) headless->trace = fopen(arg + 8, "w");
         else if (!strncmp(arg, "--trace-from=", 13)) options->trace_from = strtoull(arg + 13, NULL, 0);
+        else if (!strncmp(arg, "--agent=", 8)) options->agent_socket = arg + 8;
         else if (!strncmp(arg, "--stop-at=", 10)) options->stop_at = (uint32_t)strtoul(arg + 10, NULL, 16);
         else if (!strncmp(arg, "--count-pc=", 11)) {
             options->count_pc = (uint32_t)strtoul(arg + 11, NULL, 16);
@@ -242,6 +247,10 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else return false;
     }
     return true;
+}
+
+static void log_stderr(const char *message) {
+    fputs(message, stderr);
 }
 
 static bool start_machine(headless_t *headless) {
@@ -267,6 +276,10 @@ static bool start_machine(headless_t *headless) {
     machine->cpu.on_undefined = undefined_instruction;
     machine->cpu.on_exception = exception_raised;
     if (headless->trace || options->stop_at || options->profiling || options->count_pc_enabled) machine->cpu.before = before;
+    if (options->agent_socket && !(headless->agent = agent_create(options->agent_socket, log_stderr))) {
+        fprintf(stderr, "headless: cannot listen on agent socket %s\n", options->agent_socket);
+        return false;
+    }
     return true;
 }
 
@@ -339,6 +352,7 @@ static void run(headless_t *headless) {
             headless->next_stats = now + options->stats_every;
         }
         apply_inputs(headless, now);
+        if (headless->agent) agent_poll(headless->agent, &machine->mailbox);
         uint64_t left = total - machine->cpu.cycles;
         machine_run(machine, left < slice ? left : slice);
         if (options->wav_path) record_audio(headless);
@@ -406,6 +420,7 @@ int main(int argc, char **argv) {
     if (options->screenshot_path && !screenshot(&headless->machine, options->screenshot_path))
         fprintf(stderr, "headless: cannot write %s\n", options->screenshot_path);
     if (headless->trace) fclose(headless->trace);
+    agent_destroy(headless->agent);
     machine_free(&headless->machine);
     free(headless);
     return 0;
