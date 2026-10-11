@@ -40,7 +40,7 @@ $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(HEADLESS) $(NATIVECHECK)
+test: $(APP) $(HEADLESS) $(NATIVECHECK)
 	./$(NATIVECHECK)
 	tests/boot.sh
 

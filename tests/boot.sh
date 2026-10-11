@@ -32,12 +32,27 @@ run_app_case() {
     check_different "$name opens" "$(shasum < "$baseline")" "$(shasum < "$out/desktop.png")"
     check "$name optimized screen matches" "$(shasum < "$baseline")" "$(shasum < "$optimised")"
     check "$name optimized run repeats" "$(shasum < "$optimised")" "$(shasum < "$repeated")"
-    if ! rg -q '^native memmove: entries [1-9][0-9]*, fingerprint matched, fallbacks [0-9]+, hits [1-9][0-9]*$' "$optimised_log"; then
+    if ! grep -Eq '^native memmove: entries [1-9][0-9]*, fingerprint matched, fallbacks [0-9]+, hits [1-9][0-9]*$' "$optimised_log"; then
         echo "FAIL $name native memmove exercised"
         failed=1
     else
         echo "ok   $name native memmove exercised"
     fi
+}
+
+app_check() {
+    data="$out/app"
+    rm -rf "$data"
+    mkdir -p "$data"
+    cp "$out/desktop.state" "$data/app.state"
+    HOME="$data" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$data" SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
+        ./jornada720 --state="$data/app.state" > "$out/app.log" 2>&1 &
+    app=$!
+    sleep 3
+    if kill -0 $app 2>/dev/null; then echo "ok   app runs"; else echo "FAIL app runs"; cat "$out/app.log"; failed=1; return; fi
+    kill -TERM $app
+    if wait $app; then echo "ok   app quits"; else echo "FAIL app quits"; cat "$out/app.log"; failed=1; fi
+    check_different "app saves state" "$(shasum < "$out/desktop.state")" "$(shasum < "$data/app.state")"
 }
 
 ./headless --seconds=100 $calibrate --save=$out/calibrated.state --screenshot=$out/calibrated.png > /dev/null
@@ -50,11 +65,12 @@ run_app_case() {
 run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
+app_check
 
 check "resume matches continuous run" "$(shasum < $out/desktop.png)" "$(shasum < $out/continuous.png)"
 check "desktop stays clear of battery warnings" "$(shasum < $out/idle-full.png)" "$(shasum < $out/idle.png)"
 check "cold-start screen matches with optimisations" "$(shasum < $out/cold-start.png)" "$(shasum < $out/cold-start-optimised.png)"
-if ! rg -q '^native OSCR delay: fingerprint matched, poll skips [1-9][0-9]*$' "$out/cold-start-optimised.log"; then
+if ! grep -Eq '^native OSCR delay: fingerprint matched, poll skips [1-9][0-9]*$' "$out/cold-start-optimised.log"; then
     echo "FAIL native OSCR delay exercised"
     failed=1
 else
