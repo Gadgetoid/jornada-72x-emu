@@ -22,6 +22,7 @@ typedef struct {
     const char *tag;
     void *data;
     uint32_t size;
+    bool optional;
 } record_t;
 
 static uint64_t hash_bytes(const uint8_t *bytes, size_t length) {
@@ -66,6 +67,7 @@ bool state_save(const machine_t *machine, const char *path, uint64_t host_time) 
     ok = ok && write_record(file, "sed1356", &machine->display, sizeof machine->display);
     ok = ok && write_record(file, "eeprom", &machine->eeprom, sizeof machine->eeprom);
     ok = ok && write_record(file, "mcu", &machine->mcu, sizeof machine->mcu);
+    ok = ok && write_record(file, "cards", &machine->cards, sizeof machine->cards);
     ok = ok && write_record(file, "dram", machine->dram, machine->dram_size);
     ok = ok && write_record(file, "end", NULL, 0);
     if (gzclose(file) != Z_OK) ok = false;
@@ -97,23 +99,25 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
     sa1110_t *soc = malloc(sizeof *soc);
     sed1356_t *display = malloc(sizeof *display);
     uint8_t *dram = malloc(machine->dram_size);
+    machine_cards_t *cards = calloc(1, sizeof *cards);
     sa1111_t sa1111;
     eeprom_t eeprom;
     mcu_t mcu;
     record_t records[] = {
-        { "header", &header, sizeof header },
-        { "cpu", cpu, ARM_STATE_SIZE },
-        { "sa1110", soc, sizeof *soc },
-        { "sa1111", &sa1111, sizeof sa1111 },
-        { "sed1356", display, sizeof *display },
-        { "eeprom", &eeprom, sizeof eeprom },
-        { "mcu", &mcu, sizeof mcu },
-        { "dram", dram, machine->dram_size },
+        { "header", &header, sizeof header, false },
+        { "cpu", cpu, ARM_STATE_SIZE, false },
+        { "sa1110", soc, sizeof *soc, false },
+        { "sa1111", &sa1111, sizeof sa1111, false },
+        { "sed1356", display, sizeof *display, false },
+        { "eeprom", &eeprom, sizeof eeprom, false },
+        { "mcu", &mcu, sizeof mcu, false },
+        { "dram", dram, machine->dram_size, false },
+        { "cards", cards, sizeof *cards, true },
     };
     int record_count = (int)(sizeof records / sizeof records[0]);
     bool seen[sizeof records / sizeof records[0]] = { false };
     state_result_t result = STATE_OK;
-    if (!cpu || !soc || !display || !dram) result = STATE_UNREADABLE;
+    if (!cpu || !soc || !display || !dram || !cards) result = STATE_UNREADABLE;
     while (result == STATE_OK) {
         char tag[TAG_SIZE];
         uint32_t size;
@@ -156,7 +160,7 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
     }
     gzclose(file);
     for (int i = 0; i < record_count && result == STATE_OK; i++)
-        if (!seen[i]) result = STATE_INCOMPATIBLE;
+        if (!seen[i] && !records[i].optional) result = STATE_INCOMPATIBLE;
     if (result == STATE_OK && header.dram_size != machine->dram_size) result = STATE_INCOMPATIBLE;
     if (result == STATE_OK && header.rom_hash != hash_bytes(machine->rom, MACHINE_ROM_SIZE)) result = STATE_WRONG_ROM;
     if (result == STATE_OK) {
@@ -188,11 +192,14 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
         mailbox_clear_queue(&machine->mailbox.to_guest_from_emulator);
         mailbox_clear_queue(&machine->mailbox.to_emulator);
         if (host_time > header.host_time) machine->soc.rcnr += (uint32_t)(host_time - header.host_time);
+        machine->cards = *cards;
+        machine_restore_cards(machine);
     }
     free(cpu);
     free(soc);
     free(display);
     free(dram);
+    free(cards);
     return result;
 }
 

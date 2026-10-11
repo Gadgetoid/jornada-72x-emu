@@ -13,6 +13,7 @@ icons=${BUILD:-build}/icons
 install -D -m 755 jornada720 "$root/usr/bin/jornada720"
 install -D -m 755 headless "$root/usr/bin/jornada720-headless"
 install -D -m 755 jornada-rapi "$root/usr/bin/jornada-rapi"
+install -D -m 755 tools/mkcard.sh "$root/usr/share/$package/mkcard.sh"
 install -D -m 644 README.md "$root/usr/share/doc/$package/README.md"
 install -D -m 644 LICENSE "$root/usr/share/doc/$package/LICENSE"
 install -D -m 644 assets/icon.svg "$root/usr/share/icons/hicolor/scalable/apps/$package.svg"
@@ -66,7 +67,7 @@ Architecture: $arch
 Maintainer: Phil Howard <phil@pimoroni.com>
 Installed-Size: $size
 Depends: $depends
-Recommends: fonts-dejavu-core | fonts-noto-core
+Recommends: mtools, dosfstools, fdisk, fonts-dejavu-core | fonts-noto-core
 Section: otherosfs
 Priority: optional
 Description: HP Jornada 720 emulator

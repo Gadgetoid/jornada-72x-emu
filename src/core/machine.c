@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "core/pccard.h"
 #include "core/state.h"
 
 #define DRAM_BASE   0xC0000000u
@@ -65,8 +66,29 @@ static uint8_t *bus_page(void *context, uint32_t pa, bool write) {
     return NULL;
 }
 
+static void card_lines(machine_t *machine, int socket) {
+    pccard_slot_t slot = { &machine->card_slot[socket] };
+    sa1111_set_socket(&machine->sa1111, socket, pccard_present(&slot), pccard_ready(&slot));
+}
+
+static void cards_changed(machine_t *machine) {
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) card_lines(machine, socket);
+    update_lines(machine);
+}
+
+static bool card_access(machine_t *machine, uint32_t pa, int size, bool write, uint32_t *value) {
+    pccard_address_t address;
+    if (!pccard_decode(pa, &address)) return false;
+    pccard_slot_t slot = { &machine->card_slot[address.socket] };
+    pccard_access(&slot, &address, size, write, value);
+    card_lines(machine, address.socket);
+    update_lines(machine);
+    return true;
+}
+
 static bool bus_read(void *context, uint32_t pa, int size, uint32_t *value) {
     machine_t *machine = context;
+    if (card_access(machine, pa, size, false, value)) return true;
     if (pa >= SOC_BASE && pa < SOC_END) {
         uint32_t word = 0;
         bool known = sa1110_read(&machine->soc, machine->cpu.cycles, pa & ~3u, &word);
@@ -107,6 +129,7 @@ static uint32_t host_clock_seconds(void) {
 
 static bool bus_write(void *context, uint32_t pa, int size, uint32_t value) {
     machine_t *machine = context;
+    if (card_access(machine, pa, size, true, &value)) return true;
     if (pa >= SOC_BASE && pa < SOC_END) {
         if (machine->host_clock && (pa & ~3u) == RTC_COUNT_REGISTER && value == 0) value = host_clock_seconds();
         if (!sa1110_write(&machine->soc, machine->cpu.cycles, pa & ~3u, value)) note_unknown(machine, pa, size, true, value);
@@ -216,6 +239,12 @@ static void sa1111_gpio_changed(void *context, int block, uint32_t level) {
     machine_t *machine = context;
     bool output = !((machine->sa1111.gpio_direction[block] >> SA1111_EEPROM_SELECT) & 1);
     if (block == SA1111_BLOCK_B && output) eeprom_select(&machine->eeprom, !((level >> SA1111_EEPROM_SELECT) & 1));
+}
+
+static void sa1111_socket_reset(void *context, int socket) {
+    machine_t *machine = context;
+    cfcard_reset(&machine->card_slot[socket]);
+    card_lines(machine, socket);
 }
 
 static void sa1111_interrupt_changed(void *context, bool level) {
@@ -417,8 +446,9 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
     machine->sa1111.board = (sa1111_board_t){
         .context = machine, .ssp_exchange = sa1111_ssp_exchange, .interrupt_changed = sa1111_interrupt_changed,
         .gpio_changed = sa1111_gpio_changed, .now = machine_now, .cpu_hz = MACHINE_CPU_HZ, .dram_read = dram_read,
-        .audio = audio_output,
+        .audio = audio_output, .socket_reset = sa1111_socket_reset,
     };
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) machine->card_slot[socket].state = &machine->cards.card[socket];
     machine_reset(machine);
     machine_restore_serial_detect(machine);
     optimiser_init(&machine->optimiser, &machine->cpu);
@@ -439,6 +469,7 @@ uint32_t machine_speed(const machine_t *machine) {
 
 void machine_free(machine_t *machine) {
     mailbox_clear(&machine->mailbox);
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) cfcard_eject(&machine->card_slot[socket]);
     free(machine->rom);
     free(machine->dram);
 }
@@ -454,11 +485,76 @@ void machine_reset(machine_t *machine) {
     machine->reset_requested = false;
     mailbox_clear(&machine->mailbox);
     machine->mailbox_received_at = 0;
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) cfcard_reset(&machine->card_slot[socket]);
+    cards_changed(machine);
 }
 
 void machine_soft_reset(machine_t *machine) {
     machine_reset(machine);
     machine->soc.rcsr = SA1110_RCSR_SWR;
+}
+
+static bool insert_card_now(machine_t *machine, int socket, const char *path) {
+    FILE *image = fopen(path, "r+b");
+    if (!image) return false;
+    cfcard_insert(&machine->card_slot[socket], image);
+    snprintf(machine->cards.path[socket], sizeof machine->cards.path[socket], "%s", path);
+    cards_changed(machine);
+    return true;
+}
+
+bool machine_insert_card(machine_t *machine, int socket, const char *path) {
+    if (socket < 0 || socket >= MACHINE_SOCKETS) return false;
+    cfcard_t *card = &machine->cards.card[socket];
+    if (card->inserted && !strcmp(path, machine->cards.path[socket])) return true;
+    if (!card->inserted) return insert_card_now(machine, socket, path);
+    FILE *probe = fopen(path, "r+b");
+    if (!probe) return false;
+    fclose(probe);
+    machine_eject_card(machine, socket);
+    snprintf(machine->pending_card[socket], sizeof machine->pending_card[socket], "%s", path);
+    machine->pending_card_at[socket] = machine->cpu.cycles + MACHINE_CPU_HZ;
+    return true;
+}
+
+static void pending_card_event(machine_t *machine) {
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) {
+        if (!machine->pending_card_at[socket] || machine->cpu.cycles < machine->pending_card_at[socket]) continue;
+        machine->pending_card_at[socket] = 0;
+        if (machine->pending_card[socket][0] && !insert_card_now(machine, socket, machine->pending_card[socket]) && machine->log)
+            fprintf(machine->log, "card: cannot open %s\n", machine->pending_card[socket]);
+        machine->pending_card[socket][0] = 0;
+    }
+}
+
+void machine_eject_card(machine_t *machine, int socket) {
+    if (socket < 0 || socket >= MACHINE_SOCKETS) return;
+    machine->pending_card[socket][0] = 0;
+    machine->pending_card_at[socket] = 0;
+    if (!machine->cards.card[socket].inserted) return;
+    cfcard_eject(&machine->card_slot[socket]);
+    machine->cards.path[socket][0] = 0;
+    cards_changed(machine);
+}
+
+bool machine_card_inserted(machine_t *machine, int socket) {
+    if (socket < 0 || socket >= MACHINE_SOCKETS) return false;
+    return machine->cards.card[socket].inserted || machine->pending_card[socket][0];
+}
+
+void machine_restore_cards(machine_t *machine) {
+    sa1111_sync_sockets(&machine->sa1111);
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) {
+        cfcard_t *card = &machine->cards.card[socket];
+        machine->pending_card[socket][0] = 0;
+        machine->pending_card_at[socket] = 0;
+        cfcard_sanitize(card);
+        machine->cards.path[socket][MACHINE_CARD_PATH_MAX - 1] = 0;
+        FILE *image = card->inserted && machine->cards.path[socket][0] ? fopen(machine->cards.path[socket], "r+b") : NULL;
+        cfcard_rebind(&machine->card_slot[socket], image);
+        if (!image) machine->cards.path[socket][0] = 0;
+    }
+    cards_changed(machine);
 }
 
 void machine_run(machine_t *machine, uint64_t cycles) {
@@ -471,6 +567,7 @@ void machine_run(machine_t *machine, uint64_t cycles) {
         return;
     }
     while (cpu->cycles < end && !machine->powered_off && !cpu->stopped) {
+        pending_card_event(machine);
         sa1110_advance(&machine->soc, cpu->cycles);
         sa1111_advance(&machine->sa1111, cpu->cycles);
         pen_tick(machine);
@@ -480,6 +577,8 @@ void machine_run(machine_t *machine, uint64_t cycles) {
         if (machine->mcu.pen_down && machine->pen_next_sample < next) next = machine->pen_next_sample;
         uint64_t audio_event = sa1111_next_event(&machine->sa1111);
         if (audio_event < next) next = audio_event;
+        for (int socket = 0; socket < MACHINE_SOCKETS; socket++)
+            if (machine->pending_card_at[socket] && machine->pending_card_at[socket] < next) next = machine->pending_card_at[socket];
         if (next > end) next = end;
         if (next <= cpu->cycles) next = cpu->cycles + 1;
         optimiser_set_deadline(&machine->optimiser, next);

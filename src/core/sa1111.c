@@ -11,6 +11,13 @@
 #define SSPCR0_SSE (1u << 7)
 
 #define PCSR_EMPTY 0x3CFCu
+#define PCSR_READY(socket) (1u << (socket))
+#define PCSR_DETECT(socket) (1u << (2 + (socket)))
+#define IRQ_SOCKET_READY(socket) (17 + (socket))
+#define IRQ_SOCKET_DETECT(socket) (19 + (socket))
+#define IRQ_SOCKET_STATUS(socket) (21 + (socket))
+#define SOCKET_IRQ_MASK 0x007E0000u
+#define PCCR_RESET(socket) (1u << (socket))
 
 #define SAC_PLL_HZ 143769600u
 #define SKAUD_INDEX 2
@@ -59,10 +66,53 @@ static void update_interrupt(sa1111_t *chip) {
     chip->board.interrupt_changed(chip->board.context, level);
 }
 
+static uint32_t socket_raw_lines(const sa1111_t *chip) {
+    uint32_t lines = 0;
+    for (int socket = 0; socket < SA1111_SOCKETS; socket++) {
+        if (chip->socket_present[socket] && chip->socket_ready[socket]) lines |= 1u << IRQ_SOCKET_READY(socket);
+        if (!chip->socket_present[socket]) lines |= 1u << IRQ_SOCKET_DETECT(socket);
+        lines |= 1u << IRQ_SOCKET_STATUS(socket);
+    }
+    return lines;
+}
+
+static void socket_edges(sa1111_t *chip) {
+    uint32_t lines = (socket_raw_lines(chip) ^ chip->intpol[1]) & SOCKET_IRQ_MASK;
+    chip->intstat[1] |= lines & ~chip->socket_lines;
+    chip->socket_lines = lines;
+    update_interrupt(chip);
+}
+
+static uint32_t socket_status(const sa1111_t *chip) {
+    uint32_t status = PCSR_EMPTY;
+    for (int socket = 0; socket < SA1111_SOCKETS; socket++) {
+        if (!chip->socket_present[socket]) continue;
+        status &= ~PCSR_DETECT(socket);
+        if (chip->socket_ready[socket]) status |= PCSR_READY(socket);
+    }
+    return status;
+}
+
+void sa1111_sync_sockets(sa1111_t *chip) {
+    chip->socket_lines = (socket_raw_lines(chip) ^ chip->intpol[1]) & SOCKET_IRQ_MASK;
+}
+
+void sa1111_set_socket(sa1111_t *chip, int socket, bool present, bool ready) {
+    chip->socket_present[socket] = present;
+    chip->socket_ready[socket] = present && ready;
+    socket_edges(chip);
+}
+
 void sa1111_reset(sa1111_t *chip) {
     sa1111_board_t board = chip->board;
+    bool present[SA1111_SOCKETS], ready[SA1111_SOCKETS];
+    memcpy(present, chip->socket_present, sizeof present);
+    memcpy(ready, chip->socket_ready, sizeof ready);
     memset(chip, 0, sizeof *chip);
     chip->board = board;
+    memcpy(chip->socket_present, present, sizeof present);
+    memcpy(chip->socket_ready, ready, sizeof ready);
+    sa1111_sync_sockets(chip);
     chip->pcsr = PCSR_EMPTY;
     for (int block = 0; block < 3; block++) {
         chip->gpio_input[block] = 0xFF;
@@ -247,7 +297,7 @@ bool sa1111_read(sa1111_t *chip, uint32_t offset, uint32_t *value) {
         }
     } else if (offset == 0x1800) *value = chip->pccr;
     else if (offset == 0x1804) *value = chip->pcssr;
-    else if (offset == 0x1808) *value = chip->pcsr;
+    else if (offset == 0x1808) *value = socket_status(chip);
     else return false;
     return true;
 }
@@ -295,9 +345,13 @@ bool sa1111_write(sa1111_t *chip, uint32_t offset, uint32_t value) {
         case 0x1634: chip->wake_pol[0] = value; break;
         case 0x1638: chip->wake_pol[1] = value; break;
         }
-        update_interrupt(chip);
-    } else if (offset == 0x1800) chip->pccr = value;
-    else if (offset == 0x1804) chip->pcssr = value;
+        socket_edges(chip);
+    } else if (offset == 0x1800) {
+        uint32_t released = chip->pccr & ~value;
+        chip->pccr = value;
+        for (int socket = 0; socket < SA1111_SOCKETS; socket++)
+            if ((released & PCCR_RESET(socket)) && chip->board.socket_reset) chip->board.socket_reset(chip->board.context, socket);
+    } else if (offset == 0x1804) chip->pcssr = value;
     else if (offset == 0x1808) return true;
     else return false;
     return true;

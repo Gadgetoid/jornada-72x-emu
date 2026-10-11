@@ -4,6 +4,7 @@
 
 #define SA1111_BASE 0x40000000u
 #define SA1111_SIZE 0x00002000u
+#define SA1111_SOCKETS 2
 
 typedef struct {
     void *context;
@@ -14,6 +15,7 @@ typedef struct {
     uint64_t cpu_hz;
     bool (*dram_read)(void *context, uint32_t pa, void *buffer, uint32_t length);
     void (*audio)(void *context, const int16_t *frames, uint32_t count, uint32_t rate);
+    void (*socket_reset)(void *context, int socket);
 } sa1111_board_t;
 
 enum {
@@ -44,6 +46,9 @@ typedef struct {
     uint64_t transmit_done;
     bool transmit_ran;
     uint32_t interrupt_pending[2];
+    bool socket_present[SA1111_SOCKETS];
+    bool socket_ready[SA1111_SOCKETS];
+    uint32_t socket_lines;
 } sa1111_t;
 
 void sa1111_reset(sa1111_t *chip);
@@ -53,3 +58,5 @@ void sa1111_raise(sa1111_t *chip, int source);
 void sa1111_advance(sa1111_t *chip, uint64_t cycle);
 uint64_t sa1111_next_event(const sa1111_t *chip);
 uint32_t sa1111_audio_rate(const sa1111_t *chip);
+void sa1111_set_socket(sa1111_t *chip, int socket, bool present, bool ready);
+void sa1111_sync_sockets(sa1111_t *chip);

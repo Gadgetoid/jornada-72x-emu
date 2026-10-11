@@ -105,6 +105,37 @@ debugmgr_check() {
     check "debugmgr starts after a soft reset" "$restarted" ok
 }
 
+card_check() {
+    socket=/tmp/jornada-card-$$.sock
+    cards=$out/cards
+    rm -rf "$cards" "$socket" && mkdir -p "$cards/cf/files" "$cards/pc/files"
+    echo "hello from the host" > "$cards/cf/files/HELLO.TXT"
+    echo "hello from the PC Card" > "$cards/pc/files/PCCARD.TXT"
+    marker="written by CE over RAPI $$"
+    echo "$marker" > "$cards/put.txt"
+    sh tools/mkcard.sh "$cards/cf.img" 16 "$cards/cf/files" > /dev/null
+    sh tools/mkcard.sh "$cards/pc.img" 16 "$cards/pc/files" > /dev/null
+    ./headless --load=$out/desktop.state --card="$cards/cf.img" --pc-card="$cards/pc.img" --seconds=5 --save="$cards/card.state" > /dev/null
+    ./headless --load="$cards/card.state" --seconds=300 --net=0 --rapi="$socket" --realtime=4 > "$cards/headless.log" 2>&1 &
+    emulator=$!
+    for attempt in $(seq 1 120); do grep -q "^desktop: connection" "$cards/headless.log" && break; sleep 0.5; done
+    ./jornada-rapi --socket="$socket" get '\Storage Card\files\PCCARD.TXT' "$cards/pccard.back" > /dev/null 2>&1 || true
+    ./jornada-rapi --socket="$socket" get '\Storage Card2\files\HELLO.TXT' "$cards/hello.back" > /dev/null 2>&1 || true
+    ./jornada-rapi --socket="$socket" put "$cards/put.txt" '\Storage Card2\put.txt' > /dev/null 2>&1 || true
+    kill -TERM $emulator 2>/dev/null || true
+    wait $emulator 2>/dev/null || true
+    rm -f "$socket"
+    check "CE mounts a PC Card image as Storage Card" "$(cat "$cards/pccard.back" 2>/dev/null)" "hello from the PC Card"
+    check "CE mounts a CompactFlash image as Storage Card2" "$(cat "$cards/hello.back" 2>/dev/null)" "hello from the host"
+    check "a file put over RAPI is written to the image" "$(LC_ALL=C grep -a -c "$marker" "$cards/cf.img")" 1
+    open="--tap=10:34:18:0.1 --tap=10.5:34:18:0.1"
+    ./headless --load=$out/desktop.state --seconds=20 $open --screenshot="$cards/none.png" > /dev/null
+    ./headless --load="$cards/card.state" --seconds=20 $open --screenshot="$cards/kept.png" > /dev/null
+    ./headless --load="$cards/card.state" --eject-card=2 --eject-pc-card=2 --seconds=20 $open --screenshot="$cards/ejected.png" > /dev/null
+    check_different "a saved state keeps its cards" "$(shasum < "$cards/kept.png")" "$(shasum < "$cards/none.png")"
+    check "ejecting the cards removes them" "$(shasum < "$cards/ejected.png")" "$(shasum < "$cards/none.png")"
+}
+
 power_check() {
     word="--tap=1:514:35:0.1 --tap=1.5:514:35:0.1"
     ./headless --load=$out/desktop.state $word --key=10:0x7f --seconds=12 > "$out/sleep.log"
@@ -147,6 +178,7 @@ gdb_check() {
 run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
+card_check
 power_check
 type_check
 speed_check

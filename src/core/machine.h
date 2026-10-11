@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "core/arm.h"
+#include "core/cfcard.h"
 #include "core/eeprom.h"
 #include "core/key_text.h"
 #include "core/mailbox.h"
@@ -29,6 +30,10 @@
 #define MACHINE_SCREEN_HEIGHT 240
 #define MACHINE_AUDIO_CHANNELS 2
 #define MACHINE_ROM_HEADER_SIZE 0x1400
+#define MACHINE_SOCKETS 2
+#define MACHINE_SOCKET_PC_CARD 0
+#define MACHINE_SOCKET_CF 1
+#define MACHINE_CARD_PATH_MAX 1024
 
 typedef struct {
     uint32_t pa;
@@ -38,6 +43,11 @@ typedef struct {
     bool write;
     uint8_t size;
 } machine_unknown_t;
+
+typedef struct {
+    cfcard_t card[MACHINE_SOCKETS];
+    char path[MACHINE_SOCKETS][MACHINE_CARD_PATH_MAX];
+} machine_cards_t;
 
 typedef struct machine machine_t;
 
@@ -74,6 +84,10 @@ struct machine {
     uint8_t serial_tx[MACHINE_SERIAL_QUEUE];
     uint32_t serial_tx_read, serial_tx_write;
     bool host_clock;
+    machine_cards_t cards;
+    cfcard_slot_t card_slot[MACHINE_SOCKETS];
+    char pending_card[MACHINE_SOCKETS][MACHINE_CARD_PATH_MAX];
+    uint64_t pending_card_at[MACHINE_SOCKETS];
 };
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
@@ -117,3 +131,7 @@ bool       machine_optimisations(machine_t *machine);
 key_layout_t machine_key_layout(machine_t *machine);
 bool       machine_suspended(machine_t *machine);
 void       machine_power_button(machine_t *machine, bool down);
+bool       machine_insert_card(machine_t *machine, int socket, const char *path);
+void       machine_eject_card(machine_t *machine, int socket);
+bool       machine_card_inserted(machine_t *machine, int socket);
+void       machine_restore_cards(machine_t *machine);

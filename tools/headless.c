@@ -16,7 +16,7 @@
 #define TYPE_STEP_SECONDS 0.02
 #define PROFILE_SLOTS 4096
 
-typedef enum { INPUT_KEY, INPUT_TAP, INPUT_SERIAL } input_kind_t;
+typedef enum { INPUT_KEY, INPUT_TAP, INPUT_SERIAL, INPUT_EJECT } input_kind_t;
 
 typedef struct {
     double at;
@@ -67,6 +67,7 @@ typedef struct {
     int tcp_port;
     int gdb_port;
     const char *gdb_process;
+    const char *card[MACHINE_SOCKETS];
     net_gateway_options_t net_options;
 } options_t;
 
@@ -231,6 +232,10 @@ static void usage(void) {
             "  --stats=SECONDS    print interrupt and instruction counts at this interval\n"
             "  --load=PATH        start from a saved state (times are relative to its start)\n"
             "  --save=PATH        save state at the end\n"
+            "  --card=IMAGE       insert a CompactFlash card backed by a raw disk image, after --load\n"
+            "  --pc-card=IMAGE    insert a card image in the PC Card slot, after --load\n"
+            "  --eject-card=T     eject the CompactFlash card at T seconds\n"
+            "  --eject-pc-card=T  eject the PC Card at T seconds\n"
             "  --wav=PATH         record audio output to a WAV file\n"
             "  --backup=N         backup battery ADC reading (default 0x3C0)\n"
             "  --rtc=N            RTC counter at power on\n"
@@ -280,6 +285,12 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--wav=", 6)) options->wav_path = arg + 6;
         else if (!strncmp(arg, "--backup=", 9)) options->backup_reading = (int)strtol(arg + 9, NULL, 0);
         else if (!strncmp(arg, "--save=", 7)) options->save_path = arg + 7;
+        else if (!strncmp(arg, "--card=", 7)) options->card[MACHINE_SOCKET_CF] = arg + 7;
+        else if (!strncmp(arg, "--pc-card=", 10)) options->card[MACHINE_SOCKET_PC_CARD] = arg + 10;
+        else if (!strncmp(arg, "--eject-card=", 13))
+            add_input(headless, (input_event_t){ .at = atof(arg + 13), .kind = INPUT_EJECT, .code = MACHINE_SOCKET_CF });
+        else if (!strncmp(arg, "--eject-pc-card=", 16))
+            add_input(headless, (input_event_t){ .at = atof(arg + 16), .kind = INPUT_EJECT, .code = MACHINE_SOCKET_PC_CARD });
         else if (!strncmp(arg, "--rtc=", 6)) options->rtc_start = (uint32_t)strtoul(arg + 6, NULL, 0);
         else if (!strncmp(arg, "--key=", 6)) {
             double at;
@@ -362,6 +373,12 @@ static bool start_machine(headless_t *headless) {
         }
         headless->start_cycles = machine->cpu.cycles;
     }
+    for (int socket = 0; socket < MACHINE_SOCKETS; socket++) {
+        if (options->card[socket] && !machine_insert_card(machine, socket, options->card[socket])) {
+            fprintf(stderr, "headless: cannot open card image %s\n", options->card[socket]);
+            return false;
+        }
+    }
     machine_set_optimisations(machine, options->optimisations);
     machine_set_speed(machine, options->speed);
     machine_set_host_clock(machine, options->host_clock);
@@ -419,6 +436,7 @@ static void apply_inputs(headless_t *headless, double now) {
         input_event_t *event = &headless->inputs[i];
         if (event->at < 0 || event->at > now) continue;
         if (event->kind == INPUT_KEY) machine_key(&headless->machine, (uint8_t)event->code, event->down);
+        else if (event->kind == INPUT_EJECT) machine_eject_card(&headless->machine, event->code);
         else if (event->kind == INPUT_SERIAL) machine_serial_send(&headless->machine, (const uint8_t *)event->text, strlen(event->text));
         else machine_touch(&headless->machine, event->down, event->x, event->y);
         event->at = -1;
