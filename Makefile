@@ -1,5 +1,6 @@
 PROG     = jornada720
 HEADLESS = headless
+APP      = Jornada720.app
 ARMSTEP  = $(BUILD)/arm-step
 RAPI_TOOL = jornada-rapi
 JORNADA_TOOLS ?= ../jornada-72x-tools
@@ -75,6 +76,16 @@ $(HEADLESS): $(OBJ_HEADLESS)
 $(RAPI_TOOL): $(SRC_RAPI:%.c=$(BUILD)/%.o) $(BUILD)/src/util/options.o $(BUILD)/tools/jornada_rapi.o
 	$(CC) -o $@ $^
 
+ICON_TOOL  = $(BUILD)/icon
+ICON_SIZES = 16 32 64 128 256 512 1024
+
+$(ICON_TOOL): $(BUILD)/tools/icon.o $(BUILD)/src/util/png.o $(BUILD)/src/vendor/svg.o
+	$(CC) -o $@ $^ -lm -lz
+
+icons: $(ICON_TOOL) assets/icon.svg
+	@mkdir -p $(BUILD)/icons
+	@for size in $(ICON_SIZES); do $(ICON_TOOL) assets/icon.svg $$size $(BUILD)/icons/icon-$$size.png || exit 1; done
+
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 
 $(BUILD)/version.h: FORCE
@@ -106,6 +117,12 @@ $(BUILD)/%.o: %.m
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -std=c11,$(CFLAGS)) $(SDL_CFLAGS) -fobjc-arc -c -o $@ $<
 
+app: $(PROG) $(RAPI_TOOL) icons
+	ICONS=$(BUILD)/icons sh tools/mkapp.sh $(APP)
+
+deb:
+	sh tools/mkdeb.sh dist
+
 test: $(PROG) $(HEADLESS) $(NATIVECHECK)
 	./$(NATIVECHECK)
 	tests/boot.sh
@@ -120,8 +137,8 @@ format-check:
 	$(UNCRUSTIFY) -c .uncrustify.cfg --check $(C_STYLE_SOURCES)
 
 clean:
-	rm -rf $(BUILD) $(HEADLESS) $(PROG) $(RAPI_TOOL)
+	rm -rf $(BUILD) $(HEADLESS) $(PROG) $(RAPI_TOOL) $(APP) dist
 
-.PHONY: all clean debugmgr difftest format format-check native-check test FORCE
+.PHONY: all app clean deb debugmgr difftest format format-check icons native-check test FORCE
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3f6f9f"/>
+      <stop offset="1" stop-color="#1e3a5c"/>
+    </linearGradient>
+    <linearGradient id="lid" x1="0" y1="214" x2="0" y2="540" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e3e6ea"/>
+      <stop offset="1" stop-color="#b4bac3"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="256" x2="0" y2="496" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5fb4e8"/>
+      <stop offset="1" stop-color="#1f6aa8"/>
+    </linearGradient>
+    <linearGradient id="base" x1="0" y1="554" x2="0" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d5d9de"/>
+      <stop offset="1" stop-color="#9ca3ad"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#background)"/>
+  <rect x="206" y="214" width="612" height="326" rx="30" ry="30" fill="url(#lid)"/>
+  <rect x="246" y="250" width="532" height="250" rx="10" ry="10" fill="#20262d"/>
+  <rect x="258" y="262" width="508" height="226" rx="4" ry="4" fill="url(#screen)"/>
+  <rect x="258" y="462" width="508" height="26" fill="#cfd3d8"/>
+  <rect x="264" y="467" width="56" height="16" rx="3" ry="3" fill="#7d858f"/>
+  <rect x="704" y="467" width="56" height="16" rx="3" ry="3" fill="#7d858f"/>
+  <rect x="296" y="296" width="44" height="40" rx="6" ry="6" fill="#e8f4fb" fill-opacity="0.85"/>
+  <rect x="296" y="366" width="44" height="40" rx="6" ry="6" fill="#e8f4fb" fill-opacity="0.85"/>
+  <rect x="380" y="296" width="44" height="40" rx="6" ry="6" fill="#e8f4fb" fill-opacity="0.85"/>
+  <rect x="200" y="538" width="624" height="20" rx="6" ry="6" fill="#6f7782"/>
+  <polygon points="180,554 844,554 884,790 140,790" fill="url(#base)"/>
+  <rect x="140" y="790" width="744" height="22" rx="8" ry="8" fill="#7a828d"/>
+    <polygon points="212.9,584.0 255.4,584.0 251.3,613.2 208.0,613.2" fill="#2f343b"/>
+    <polygon points="263.4,584.0 305.9,584.0 302.6,613.2 259.3,613.2" fill="#2f343b"/>
+    <polygon points="313.9,584.0 356.5,584.0 354.0,613.2 310.6,613.2" fill="#2f343b"/>
+    <polygon points="364.5,584.0 407.0,584.0 405.3,613.2 362.0,613.2" fill="#2f343b"/>
+    <polygon points="415.0,584.0 457.5,584.0 456.7,613.2 413.3,613.2" fill="#2f343b"/>
+    <polygon points="465.5,584.0 508.0,584.0 508.0,613.2 464.7,613.2" fill="#2f343b"/>
+    <polygon points="516.0,584.0 558.5,584.0 559.3,613.2 516.0,613.2" fill="#2f343b"/>
+    <polygon points="566.5,584.0 609.0,584.0 610.7,613.2 567.3,613.2" fill="#2f343b"/>
+    <polygon points="617.0,584.0 659.5,584.0 662.0,613.2 618.7,613.2" fill="#2f343b"/>
+    <polygon points="667.5,584.0 710.1,584.0 713.4,613.2 670.0,613.2" fill="#2f343b"/>
+    <polygon points="718.1,584.0 760.6,584.0 764.7,613.2 721.4,613.2" fill="#2f343b"/>
+    <polygon points="768.6,584.0 811.1,584.0 816.0,613.2 772.7,613.2" fill="#2f343b"/>
+    <polygon points="206.6,621.2 250.2,621.2 246.1,650.4 201.7,650.4" fill="#2f343b"/>
+    <polygon points="258.2,621.2 301.7,621.2 298.4,650.4 254.1,650.4" fill="#2f343b"/>
+    <polygon points="309.7,621.2 353.3,621.2 350.8,650.4 306.4,650.4" fill="#2f343b"/>
+    <polygon points="361.3,621.2 404.9,621.2 403.2,650.4 358.8,650.4" fill="#2f343b"/>
+    <polygon points="412.9,621.2 456.4,621.2 455.6,650.4 411.2,650.4" fill="#2f343b"/>
+    <polygon points="464.4,621.2 508.0,621.2 508.0,650.4 463.6,650.4" fill="#2f343b"/>
+    <polygon points="516.0,621.2 559.6,621.2 560.4,650.4 516.0,650.4" fill="#2f343b"/>
+    <polygon points="567.6,621.2 611.1,621.2 612.8,650.4 568.4,650.4" fill="#2f343b"/>
+    <polygon points="619.1,621.2 662.7,621.2 665.2,650.4 620.8,650.4" fill="#2f343b"/>
+    <polygon points="670.7,621.2 714.3,621.2 717.6,650.4 673.2,650.4" fill="#2f343b"/>
+    <polygon points="722.3,621.2 765.8,621.2 769.9,650.4 725.6,650.4" fill="#2f343b"/>
+    <polygon points="773.8,621.2 817.4,621.2 822.3,650.4 777.9,650.4" fill="#2f343b"/>
+    <polygon points="200.3,658.4 244.9,658.4 240.8,687.6 195.4,687.6" fill="#2f343b"/>
+    <polygon points="252.9,658.4 297.5,658.4 294.2,687.6 248.8,687.6" fill="#2f343b"/>
+    <polygon points="305.5,658.4 350.2,658.4 347.7,687.6 302.2,687.6" fill="#2f343b"/>
+    <polygon points="358.2,658.4 402.8,658.4 401.1,687.6 355.7,687.6" fill="#2f343b"/>
+    <polygon points="410.8,658.4 455.4,658.4 454.6,687.6 409.1,687.6" fill="#2f343b"/>
+    <polygon points="463.4,658.4 508.0,658.4 508.0,687.6 462.6,687.6" fill="#2f343b"/>
+    <polygon points="516.0,658.4 560.6,658.4 561.4,687.6 516.0,687.6" fill="#2f343b"/>
+    <polygon points="568.6,658.4 613.2,658.4 614.9,687.6 569.4,687.6" fill="#2f343b"/>
+    <polygon points="621.2,658.4 665.8,658.4 668.3,687.6 622.9,687.6" fill="#2f343b"/>
+    <polygon points="673.8,658.4 718.5,658.4 721.8,687.6 676.3,687.6" fill="#2f343b"/>
+    <polygon points="726.5,658.4 771.1,658.4 775.2,687.6 729.8,687.6" fill="#2f343b"/>
+    <polygon points="779.1,658.4 823.7,658.4 828.6,687.6 783.2,687.6" fill="#2f343b"/>
+    <polygon points="194.0,695.6 239.7,695.6 235.5,724.8 189.1,724.8" fill="#2f343b"/>
+    <polygon points="247.7,695.6 293.3,695.6 290.0,724.8 243.5,724.8" fill="#2f343b"/>
+    <polygon points="301.3,695.6 347.0,695.6 344.5,724.8 298.0,724.8" fill="#2f343b"/>
+    <polygon points="355.0,695.6 400.7,695.6 399.0,724.8 352.5,724.8" fill="#2f343b"/>
+    <polygon points="408.7,695.6 454.3,695.6 453.5,724.8 407.0,724.8" fill="#2f343b"/>
+    <polygon points="462.3,695.6 508.0,695.6 508.0,724.8 461.5,724.8" fill="#2f343b"/>
+    <polygon points="516.0,695.6 561.7,695.6 562.5,724.8 516.0,724.8" fill="#2f343b"/>
+    <polygon points="569.7,695.6 615.3,695.6 617.0,724.8 570.5,724.8" fill="#2f343b"/>
+    <polygon points="623.3,695.6 669.0,695.6 671.5,724.8 625.0,724.8" fill="#2f343b"/>
+    <polygon points="677.0,695.6 722.7,695.6 726.0,724.8 679.5,724.8" fill="#2f343b"/>
+    <polygon points="730.7,695.6 776.3,695.6 780.5,724.8 734.0,724.8" fill="#2f343b"/>
+    <polygon points="784.3,695.6 830.0,695.6 834.9,724.8 788.5,724.8" fill="#2f343b"/>
+    <polygon points="187.7,732.8 297.9,732.8 294.7,762.0 182.7,762.0" fill="#2f343b"/>
+    <polygon points="332.1,732.8 691.9,732.8 694.6,762.0 329.4,762.0" fill="#2f343b"/>
+    <polygon points="726.1,732.8 836.3,732.8 841.3,762.0 729.3,762.0" fill="#2f343b"/>
+</svg>

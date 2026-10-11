@@ -9,3 +9,5 @@ __pycache__/
 jornada720
 jornada-rapi
 .claude/
+Jornada720.app
+dist/
