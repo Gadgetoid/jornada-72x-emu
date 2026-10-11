@@ -21,6 +21,14 @@
 #define PAGE_TYPE           0x003u
 #define PAGE_ACCESS         0xFF0u
 #define PHYSICAL_BLOCK      0x400u
+#define ROM_VA              0x80000000u
+#define KERNEL_SCAN_SIZE    0x00100000u
+#define FUNCTION_SCAN       64u
+#define LDR_PC_MASK         0x0F7F0000u
+#define LDR_PC              0x051F0000u
+#define LDR_PC_UP           (1u << 23)
+#define PUSH_LR_MASK        0xFFFF4000u
+#define PUSH_LR             0xE92D4000u
 #define SLOT_BASE(process)  ((uint32_t)((process) + 1) * CE_SLOT_SIZE)
 
 typedef struct {
@@ -31,6 +39,8 @@ typedef struct {
     uint32_t base;
     uint32_t entry;
 } module_layout_t;
+
+static const char FAULT_REPORT[] = "Exception '%a' Thread=";
 
 static const module_layout_t MODULE_LAYOUT = { 0x00, 0x04, 0x08, 0x0C, 0x54, 0x60 };
 
@@ -285,4 +295,40 @@ int ce_modules(ce_t *ce, ce_module_t *modules, int max) {
         if (!kernel_word(ce, module + MODULE_LAYOUT.next, &module)) break;
     }
     return count;
+}
+
+static bool rom_word(ce_t *ce, uint32_t pa, uint32_t *value) {
+    return pa < MACHINE_ROM_SIZE && physical_word(ce, pa, value);
+}
+
+static bool find_wide_text(ce_t *ce, const char *text, uint32_t *pa) {
+    size_t length = strlen(text);
+    const uint8_t *rom = ce->machine->rom;
+    for (uint32_t offset = 0; offset + length * 2 <= KERNEL_SCAN_SIZE; offset += 2) {
+        size_t i = 0;
+        while (i < length && rom[offset + i * 2] == (uint8_t)text[i] && !rom[offset + i * 2 + 1]) i++;
+        if (i < length) continue;
+        *pa = offset;
+        return true;
+    }
+    return false;
+}
+
+bool ce_find_fault_report(ce_t *ce, uint32_t *va) {
+    uint32_t text, word;
+    if (!find_wide_text(ce, FAULT_REPORT, &text)) return false;
+    for (uint32_t literal = 0; literal < KERNEL_SCAN_SIZE; literal += 4) {
+        if (!rom_word(ce, literal, &word) || word != ROM_VA + text) continue;
+        for (uint32_t load = literal > 4096 ? literal - 4096 : 0; load < literal; load += 4) {
+            if (!rom_word(ce, load, &word) || (word & LDR_PC_MASK) != LDR_PC) continue;
+            uint32_t offset = word & 0xFFFu;
+            if ((word & LDR_PC_UP ? load + 8 + offset : load + 8 - offset) != literal) continue;
+            for (uint32_t back = 0; back < FUNCTION_SCAN && back * 4 <= load; back++) {
+                if (!rom_word(ce, load - back * 4, &word) || (word & PUSH_LR_MASK) != PUSH_LR) continue;
+                *va = ROM_VA + load - back * 4;
+                return true;
+            }
+        }
+    }
+    return false;
 }

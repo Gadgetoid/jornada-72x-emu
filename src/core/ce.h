@@ -40,3 +40,4 @@ bool ce_read_word(ce_t *ce, uint32_t va, int process, uint32_t *value);
 int  ce_modules(ce_t *ce, ce_module_t *modules, int max);
 bool ce_first_module(ce_t *ce, uint32_t *module);
 bool ce_module_entry(ce_t *ce, uint32_t module, uint32_t *entry);
+bool ce_find_fault_report(ce_t *ce, uint32_t *va);

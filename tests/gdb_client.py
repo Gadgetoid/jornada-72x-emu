@@ -77,6 +77,8 @@ def main():
     check("registers", len(registers) == REGISTER_COUNT * 8, str(len(registers)))
     processes = client.monitor("processes")
     check("processes", "NK.EXE" in processes and "filesys.exe" in processes and "explorer.exe" in processes, processes)
+    catch = client.monitor("catch")
+    check("crash report found", "stopping on crashes: on" in catch, catch)
     handler = int.from_bytes(bytes.fromhex(client.request("m%x,4" % IRQ_LITERAL)), "little")
     check("memory", handler >= 0x80000000, hex(handler))
     libraries = client.request("qXfer:libraries:read::0,fff")

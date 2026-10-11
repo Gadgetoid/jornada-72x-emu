@@ -23,6 +23,7 @@
 
 #define PACKET_MAX         0x4000
 #define BREAKPOINT_MAX     64
+#define FAULT_HISTORY      8
 #define FILTER_BITS        8192u
 #define RUN_QUANTUM        (MACHINE_CPU_HZ / 100)
 #define LIBRARY_CHECK_QUANTA 10
@@ -53,10 +54,19 @@
 #define REGISTER_PC        15
 #define REGISTER_CPSR      16
 #define KERNEL_BASE        0x80000000u
+#define TRAP_BASE          0xF0000000u
+#define VECTOR_UNDEFINED   0x04u
+#define VECTOR_PREFETCH    0x0Cu
+#define VECTOR_DATA_ABORT  0x10u
+#define CE_ID_UNDEFINED    1u
+#define CE_ID_PREFETCH     3u
+#define CE_ID_DATA_ABORT   4u
 #define ANY_PROCESS        (-1)
 
 #define SIGNAL_INT  2
+#define SIGNAL_ILL  4
 #define SIGNAL_TRAP 5
+#define SIGNAL_SEGV 11
 
 static const char TARGET_XML[] =
     "<?xml version=\"1.0\"?>\n"
@@ -74,6 +84,13 @@ static const char TARGET_XML[] =
     "</target>\n";
 
 typedef enum { STOP_NONE, STOP_SIGNAL, STOP_LIBRARY } stop_kind_t;
+
+typedef struct {
+    uint32_t r[16];
+    uint32_t cpsr, far, fsr;
+    uint32_t vector;
+    int process;
+} fault_t;
 
 typedef struct {
     void *context;
@@ -98,6 +115,7 @@ struct gdb {
     bool halted;
     bool killed;
     bool hung_up;
+    bool catch_faults;
     bool elf_libraries;
     uint32_t library_hash;
     int library_check;
@@ -145,6 +163,12 @@ struct gdb {
 
     stop_kind_t stop_kind;
     int stop_signal;
+
+    uint32_t fault_report;
+    fault_t faults[FAULT_HISTORY];
+    int fault_next;
+    bool post_mortem;
+    fault_t post_mortem_fault;
 
     char packet[PACKET_MAX + 1];
     char frame[PACKET_MAX * 2 + 8];
@@ -276,6 +300,7 @@ static int current_process(gdb_t *gdb) {
 }
 
 static int memory_process(gdb_t *gdb) {
+    if (gdb->post_mortem) return gdb->post_mortem_fault.process;
     return gdb->process >= 0 ? gdb->process : CE_CURRENT;
 }
 
@@ -323,9 +348,11 @@ static void update_debug(gdb_t *gdb) {
     memset(gdb->filter, 0, sizeof gdb->filter);
     for (int i = 0; i < gdb->breakpoint_count; i++) filter_add(gdb, gdb->breakpoints[i]);
     for (int i = 0; i < gdb->entry_break_count; i++) filter_add(gdb, gdb->entry_breaks[i]);
+    if (gdb->catch_faults && gdb->fault_report) filter_add(gdb, gdb->fault_report);
     gdb->every = gdb->stepping || gdb->resume_skip || gdb->waiting_for_process;
     bool active = !gdb->paused && gdb->client >= 0;
-    bool wanted = active && (gdb->every || gdb->breakpoint_count || gdb->entry_break_count);
+    bool catching = gdb->inferior && gdb->catch_faults && gdb->fault_report;
+    bool wanted = active && (gdb->every || gdb->breakpoint_count || gdb->entry_break_count || catching);
     cpu->before = wanted || gdb->chained.before ? on_before : NULL;
     cpu->on_exception = (active && gdb->inferior) || gdb->chained.on_exception ? on_exception : NULL;
 }
@@ -350,6 +377,44 @@ static void pause_debug(gdb_t *gdb, bool paused) {
     update_debug(gdb);
 }
 
+static uint32_t fault_vector(uint32_t id) {
+    switch (id) {
+    case CE_ID_UNDEFINED: return VECTOR_UNDEFINED;
+    case CE_ID_PREFETCH: return VECTOR_PREFETCH;
+    case CE_ID_DATA_ABORT: return VECTOR_DATA_ABORT;
+    default: return 0;
+    }
+}
+
+static int fault_signal(uint32_t vector) {
+    return vector == VECTOR_UNDEFINED ? SIGNAL_ILL : SIGNAL_SEGV;
+}
+
+static const char *fault_name(uint32_t vector) {
+    switch (vector) {
+    case VECTOR_UNDEFINED: return "undefined instruction";
+    case VECTOR_PREFETCH: return "prefetch abort";
+    default: return "data abort";
+    }
+}
+
+static bool check_fault_report(gdb_t *gdb, int process) {
+    uint32_t vector = fault_vector(machine_cpu(gdb)->r[2]);
+    if (!gdb->catch_faults || !gdb->inferior || !vector) return false;
+    for (int back = 1; back <= FAULT_HISTORY; back++) {
+        fault_t *fault = &gdb->faults[(gdb->fault_next + FAULT_HISTORY - back) % FAULT_HISTORY];
+        if (fault->vector != vector || fault->process != process) continue;
+        if (gdb->process >= 0 && fault->process != gdb->process) return false;
+        gdb->post_mortem_fault = *fault;
+        gdb->post_mortem = true;
+        *fault = (fault_t){ 0 };
+        gdb->stop_kind = STOP_SIGNAL;
+        gdb->stop_signal = fault_signal(vector);
+        return true;
+    }
+    return false;
+}
+
 static bool check_before(gdb_t *gdb, uint32_t pc) {
     arm_cpu_t *cpu = machine_cpu(gdb);
     int process = current_process(gdb);
@@ -367,6 +432,7 @@ static bool check_before(gdb_t *gdb, uint32_t pc) {
         gdb->stop_kind = STOP_LIBRARY;
         return true;
     }
+    if (pc == gdb->fault_report && check_fault_report(gdb, process)) return true;
     if (gdb->waiting_for_process && user && process != gdb->last_user_process) {
         gdb->last_user_process = process;
         char name[CE_NAME_MAX];
@@ -409,10 +475,28 @@ static bool on_before(void *context, uint32_t pc) {
     return true;
 }
 
+static void record_fault(gdb_t *gdb, uint32_t vector, uint32_t link) {
+    arm_cpu_t *cpu = machine_cpu(gdb);
+    uint32_t pc = link - (vector == VECTOR_DATA_ABORT ? 8 : 4);
+    if (vector != VECTOR_UNDEFINED && vector != VECTOR_PREFETCH && vector != VECTOR_DATA_ABORT) return;
+    if (!thread_mode(cpu, pc) || (vector == VECTOR_PREFETCH && pc >= TRAP_BASE)) return;
+    fault_t *fault = &gdb->faults[gdb->fault_next];
+    gdb->fault_next = (gdb->fault_next + 1) % FAULT_HISTORY;
+    memcpy(fault->r, cpu->r, sizeof fault->r);
+    fault->r[15] = pc;
+    fault->cpsr = cpu->cpsr;
+    fault->far = cpu->far;
+    fault->fsr = cpu->fsr;
+    fault->vector = vector;
+    fault->process = current_process(gdb);
+}
+
 static void on_exception(void *context, uint32_t vector, uint32_t pc) {
     gdb_t *gdb = context;
     if (gdb->chained.on_exception) gdb->chained.on_exception(gdb->chained.context, vector, pc);
-    if (!gdb->paused && gdb->client >= 0 && gdb->inferior && !gdb->halted) watch_modules(gdb);
+    if (gdb->paused || gdb->client < 0 || !gdb->inferior || gdb->halted) return;
+    if (gdb->catch_faults && gdb->fault_report) record_fault(gdb, vector, pc);
+    watch_modules(gdb);
 }
 
 static void on_undefined(void *context, uint32_t pc, uint32_t op) {
@@ -445,6 +529,11 @@ static void remove_hooks(gdb_t *gdb) {
 
 static uint32_t read_register(gdb_t *gdb, int number) {
     arm_cpu_t *cpu = machine_cpu(gdb);
+    if (gdb->post_mortem) {
+        const fault_t *fault = &gdb->post_mortem_fault;
+        if (number < 16) return fault->r[number];
+        return number == REGISTER_CPSR ? fault->cpsr : 0;
+    }
     if (number < 16) return cpu->r[number];
     if (number == REGISTER_CPSR) return cpu->cpsr;
     return 0;
@@ -452,6 +541,7 @@ static uint32_t read_register(gdb_t *gdb, int number) {
 
 static void write_register(gdb_t *gdb, int number, uint32_t value) {
     arm_cpu_t *cpu = machine_cpu(gdb);
+    if (gdb->post_mortem) return;
     if (number < REGISTER_PC) cpu->r[number] = value;
     else if (number == REGISTER_PC) cpu->r[15] = value & ~3u;
     else if (number == REGISTER_CPSR && value != cpu->cpsr) arm_set_cpsr(cpu, value);
@@ -555,6 +645,14 @@ static void halt(gdb_t *gdb) {
     gdb->stepping = false;
     gdb->resume_skip = false;
     update_debug(gdb);
+    if (gdb->post_mortem && (!gdb->non_stop || gdb->sync_reply)) {
+        char name[CE_NAME_MAX] = "";
+        ce_process_name(&gdb->ce, gdb->post_mortem_fault.process, name, sizeof name);
+        char text[200];
+        snprintf(text, sizeof text, "jornada-72x-emu: %s in %s at %08x, far %08x\n", fault_name(gdb->post_mortem_fault.vector),
+                 name[0] ? name : "a process", gdb->post_mortem_fault.r[15], gdb->post_mortem_fault.far);
+        send_console(gdb, text);
+    }
     send_stop_reply(gdb);
 }
 
@@ -562,6 +660,7 @@ static void resume(gdb_t *gdb, bool step) {
     arm_cpu_t *cpu = machine_cpu(gdb);
     uint32_t pc = cpu->r[15];
     gdb->halted = false;
+    gdb->post_mortem = false;
     gdb->stop_kind = STOP_NONE;
     gdb->stop_signal = 0;
     gdb->stop = false;
@@ -727,12 +826,19 @@ static void handle_monitor(gdb_t *gdb, const char *packet) {
         if (argument && !strcmp(argument, "dll")) gdb->elf_libraries = false;
         else if (argument && !strcmp(argument, "elf")) gdb->elf_libraries = true;
         monitor_reply(gdb, "DLLs are reported to GDB as %s files\n", gdb->elf_libraries ? ".elf" : ".dll");
+    } else if (!strcmp(command, "catch")) {
+        if (argument && !strcmp(argument, "off")) gdb->catch_faults = false;
+        else if (argument && !strcmp(argument, "on")) gdb->catch_faults = true;
+        update_debug(gdb);
+        if (gdb->catch_faults && !gdb->fault_report) monitor_reply(gdb, "CE's exception report isn't in this ROM, so crashes can't be caught\n");
+        else monitor_reply(gdb, "stopping on crashes: %s\n", gdb->catch_faults ? "on" : "off");
     } else {
         monitor_reply(gdb, "jornada-72x-emu monitor commands:\n"
                       "  processes          list CE's processes (* current, > debugged)\n"
                       "  process [NAME|any] debug one process; stops when it starts if it isn't running\n"
                       "  modules            list loaded modules (* used by the debugged process)\n"
-                      "  libraries elf|dll  name DLLs to GDB by their .elf (default) or .dll file\n");
+                      "  libraries elf|dll  name DLLs to GDB by their .elf (default) or .dll file\n"
+                      "  catch on|off       stop when CE reports a crash (default on)\n");
     }
     send_packet(gdb, "OK");
 }
@@ -1022,6 +1128,7 @@ static void handle_vrun(gdb_t *gdb, const char *packet) {
     gdb->waiting_for_process = true;
     gdb->last_user_process = current_process(gdb);
     gdb->breakpoint_count = 0;
+    gdb->post_mortem = false;
     update_debug(gdb);
     uint8_t *message = gdb->agent_message;
     size_t length;
@@ -1103,6 +1210,7 @@ static void forget_inferior(gdb_t *gdb) {
     gdb->process = -1;
     gdb->process_name[0] = 0;
     gdb->breakpoint_count = 0;
+    gdb->post_mortem = false;
     update_debug(gdb);
 }
 
@@ -1310,6 +1418,7 @@ static void detach_debugger(gdb_t *gdb) {
     gdb->halted = false;
     gdb->stepping = false;
     gdb->resume_skip = false;
+    gdb->post_mortem = false;
     gdb->stop = false;
     update_debug(gdb);
 }
@@ -1366,7 +1475,9 @@ gdb_t *gdb_create(machine_t *machine, int port, bool network, gdb_log_fn log) {
     gdb->process = -1;
     gdb->last_user_process = -1;
     gdb->elf_libraries = true;
+    gdb->catch_faults = true;
     ce_init(&gdb->ce, machine);
+    if (!ce_find_fault_report(&gdb->ce, &gdb->fault_report)) gdb->fault_report = 0;
     install_hooks(gdb);
     if (network) logf_gdb(gdb, "gdb: listening on all interfaces, port %d\n", port);
     else logf_gdb(gdb, "gdb: listening on 127.0.0.1:%d\n", port);
@@ -1465,7 +1576,10 @@ void gdb_set_machine(gdb_t *gdb, machine_t *machine) {
     bool installed = gdb->machine == machine;
     gdb->machine = machine;
     ce_init(&gdb->ce, machine);
+    if (!ce_find_fault_report(&gdb->ce, &gdb->fault_report)) gdb->fault_report = 0;
     gdb->stop = false;
+    gdb->post_mortem = false;
+    memset(gdb->faults, 0, sizeof gdb->faults);
     if (gdb->process_name[0]) {
         char name[CE_NAME_MAX];
         snprintf(name, sizeof name, "%s", gdb->process_name);
