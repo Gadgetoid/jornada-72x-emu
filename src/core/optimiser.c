@@ -68,7 +68,7 @@ static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
         cpu->r[2] = last_value;
         cpu->cpsr = (cpu->cpsr & ~(ARM_PSR_N | ARM_PSR_Z | ARM_PSR_C | ARM_PSR_V)) | ARM_PSR_Z | ARM_PSR_C;
         cpu->r[15] = cpu->r[14];
-        cpu->cycles += CACHE_SWEEP_CYCLES - 1;
+        arm_add_instructions(cpu, CACHE_SWEEP_CYCLES - 1);
         cpu->instructions += CACHE_SWEEP_CYCLES;
         return true;
     }
@@ -95,7 +95,7 @@ static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
     optimiser->memmove_guest_cycles_charged += result.cycles;
     cpu->r[0] = result.value;
     cpu->r[15] = cpu->r[14];
-    cpu->cycles += result.cycles - 1;
+    arm_add_instructions(cpu, result.cycles - 1);
     cpu->instructions += result.cycles;
     return true;
 }

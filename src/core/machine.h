@@ -22,6 +22,7 @@
 #define MACHINE_SERIAL_PORT  3
 #define MACHINE_GPIO_SERIAL_DETECT 15
 #define MACHINE_POWER_KEY 0x7F
+#define MACHINE_SPEED_MAX 2
 
 typedef struct {
     uint32_t pa;
@@ -70,6 +71,8 @@ struct machine {
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
 void machine_set_optimisations(machine_t *machine, bool enabled);
+void machine_set_speed(machine_t *machine, uint32_t multiplier);
+uint32_t machine_speed(const machine_t *machine);
 void machine_free(machine_t *machine);
 void machine_reset(machine_t *machine);
 void machine_soft_reset(machine_t *machine);

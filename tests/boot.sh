@@ -93,6 +93,12 @@ power_check() {
     check "On/Off key resumes Pocket Word" "$(shasum < $out/wake.png)" "$(shasum < $out/awake.png)"
 }
 
+speed_check() {
+    single=$(./headless --seconds=2 | sed -n 's/.* \([0-9][0-9]*\) instructions.*/\1/p' | head -1)
+    double=$(./headless --seconds=2 --speed=2 | sed -n 's/.* \([0-9][0-9]*\) instructions.*/\1/p' | head -1)
+    if [ $((double * 10)) -ge $((single * 15)) ]; then echo "ok   2x speed runs more instructions"; else echo "FAIL 2x speed runs more instructions ($single, $double)"; failed=1; fi
+}
+
 gdb_check() {
     port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     ./headless --load=$out/desktop.state --gdb=$port > "$out/gdb.log" 2>&1 &
@@ -114,6 +120,7 @@ run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
 power_check
+speed_check
 debugmgr_check
 app_check
 gdb_check

@@ -413,6 +413,14 @@ void machine_set_optimisations(machine_t *machine, bool enabled) {
     optimiser_set_enabled(&machine->optimiser, enabled);
 }
 
+void machine_set_speed(machine_t *machine, uint32_t multiplier) {
+    machine->cpu.speed = multiplier < 1 ? 1 : multiplier > MACHINE_SPEED_MAX ? MACHINE_SPEED_MAX : multiplier;
+}
+
+uint32_t machine_speed(const machine_t *machine) {
+    return machine->cpu.speed ? machine->cpu.speed : 1;
+}
+
 void machine_free(machine_t *machine) {
     mailbox_clear(&machine->mailbox);
     free(machine->rom);

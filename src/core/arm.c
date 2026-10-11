@@ -890,8 +890,16 @@ static bool fetch(arm_cpu_t *cpu, uint32_t pc, uint32_t *op) {
     return false;
 }
 
+void arm_add_instructions(arm_cpu_t *cpu, uint64_t count) {
+    uint32_t speed = cpu->speed ? cpu->speed : 1;
+    uint64_t total = cpu->speed_count + count;
+    cpu->cycles += total / speed;
+    cpu->speed_count = (uint32_t)(total % speed);
+}
+
 void arm_run(arm_cpu_t *cpu, uint64_t until_cycle) {
     cpu->yield = false;
+    uint32_t speed = cpu->speed ? cpu->speed : 1;
     while (cpu->cycles < until_cycle && !cpu->yield) {
         if (cpu->waiting) {
             if (!cpu->irq_line && !cpu->fiq_line) {
@@ -900,7 +908,10 @@ void arm_run(arm_cpu_t *cpu, uint64_t until_cycle) {
             }
             cpu->waiting = false;
         }
-        cpu->cycles++;
+        if (++cpu->speed_count >= speed) {
+            cpu->speed_count = 0;
+            cpu->cycles++;
+        }
         uint32_t pc = cpu->r[15];
         if (cpu->fiq_line && !(cpu->cpsr & ARM_PSR_F)) {
             raise_exception(cpu, ARM_MODE_FIQ, VECTOR_FIQ, pc + 4);

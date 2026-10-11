@@ -121,12 +121,15 @@ struct arm_cpu {
     bool (*before)(void *context, uint32_t pc);
     void (*on_exception)(void *context, uint32_t vector, uint32_t pc);
     bool stopped;
+    uint32_t speed;
+    uint32_t speed_count;
 };
 
 #define ARM_STATE_SIZE offsetof(arm_cpu_t, bus)
 
 void arm_reset(arm_cpu_t *cpu);
 void arm_run(arm_cpu_t *cpu, uint64_t until_cycle);
+void arm_add_instructions(arm_cpu_t *cpu, uint64_t count);
 void arm_set_cpsr(arm_cpu_t *cpu, uint32_t value);
 void arm_flush_translations(arm_cpu_t *cpu);
 bool arm_translate(arm_cpu_t *cpu, uint32_t va, bool write, bool user, uint32_t *pa, uint32_t *fault);

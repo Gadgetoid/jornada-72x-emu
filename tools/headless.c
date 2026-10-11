@@ -38,6 +38,7 @@ typedef struct {
     bool seconds_given;
     bool log;
     bool optimisations;
+    uint32_t speed;
     bool profiling;
     bool profile_user_only;
     double stats_every;
@@ -204,6 +205,7 @@ static void usage(void) {
             "  --log              print unknown bus accesses as they happen\n"
             "  --profile[=user]   print the most frequent PCs (modified virtual addresses), from --trace-from on\n"
             "  --optimisations    enable native CE routine optimisations (default off)\n"
+            "  --speed=N          run the CPU at N times its clock against the timers: 1 or 2 (default 1)\n"
             "  --stats=SECONDS    print interrupt and instruction counts at this interval\n"
             "  --load=PATH        start from a saved state (times are relative to its start)\n"
             "  --save=PATH        save state at the end\n"
@@ -246,6 +248,7 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         }
         else if (!strcmp(arg, "--log")) options->log = true;
         else if (!strcmp(arg, "--optimisations")) options->optimisations = true;
+        else if (!strncmp(arg, "--speed=", 8)) options->speed = (uint32_t)strtoul(arg + 8, NULL, 0);
         else if (!strcmp(arg, "--profile")) options->profiling = true;
         else if (!strcmp(arg, "--profile=user")) options->profiling = options->profile_user_only = true;
         else if (!strncmp(arg, "--stats=", 8)) options->stats_every = atof(arg + 8);
@@ -331,6 +334,7 @@ static bool start_machine(headless_t *headless) {
         headless->start_cycles = machine->cpu.cycles;
     }
     machine_set_optimisations(machine, options->optimisations);
+    machine_set_speed(machine, options->speed);
     if (options->backup_reading >= 0) machine->mcu.backup_battery = (uint16_t)options->backup_reading;
     if (options->log) machine->log = stderr;
     machine->cpu.hook_context = headless;
