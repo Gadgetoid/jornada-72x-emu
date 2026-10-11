@@ -80,12 +80,13 @@ static uint64_t audio_now(const sa1111_t *chip) {
 static void start_transmit(sa1111_t *chip, uint64_t cycle) {
     if (chip->transmit_active || !(chip->transmit_control & SADTCS_TDEN)) return;
     int buffer;
-    if (chip->transmit_pending[0] && chip->transmit_pending[1]) buffer = chip->transmit_control & SADTCS_TBIU ? 0 : 1;
+    if (chip->transmit_pending[0] && chip->transmit_pending[1]) buffer = !chip->transmit_ran || (chip->transmit_control & SADTCS_TBIU) ? 0 : 1;
     else if (chip->transmit_pending[0]) buffer = 0;
     else if (chip->transmit_pending[1]) buffer = 1;
     else return;
     chip->transmit_pending[buffer] = false;
     chip->transmit_active = buffer + 1;
+    chip->transmit_ran = true;
     if (buffer) chip->transmit_control |= SADTCS_TBIU;
     else chip->transmit_control &= ~SADTCS_TBIU;
     uint32_t frames = (chip->transmit_count[buffer] & 0x1FFC) / 4;
@@ -167,6 +168,8 @@ static void sac_write(sa1111_t *chip, uint32_t offset, uint32_t value) {
         if (!(value & SADTCS_TDEN)) {
             chip->transmit_active = SA1111_AUDIO_NONE;
             chip->transmit_pending[0] = chip->transmit_pending[1] = false;
+            chip->transmit_ran = false;
+            chip->transmit_control &= ~SADTCS_TBIU;
         }
         start_transmit(chip, audio_now(chip));
         break;

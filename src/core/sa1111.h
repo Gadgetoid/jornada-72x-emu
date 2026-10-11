@@ -42,6 +42,7 @@ typedef struct {
     bool transmit_pending[2];
     int transmit_active;
     uint64_t transmit_done;
+    bool transmit_ran;
 } sa1111_t;
 
 void sa1111_reset(sa1111_t *chip);
