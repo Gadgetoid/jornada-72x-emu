@@ -69,7 +69,7 @@ static int check_random_cases(void) {
         uint32_t source_offset = random_next(&random_state) % 8192;
         uint32_t distance = random_next(&random_state) % 4096;
         uint32_t destination_offset = (random_next(&random_state) & 1) ? source_offset + distance :
-                                     source_offset > distance ? source_offset - distance : source_offset;
+                                      source_offset > distance ? source_offset - distance : source_offset;
         uint32_t length = random_next(&random_state) % 4097;
         if (source_offset + length >= MEMORY_SIZE || destination_offset + length >= MEMORY_SIZE) return 1;
         for (uint32_t i = 0; i < MEMORY_SIZE; i++) {
@@ -180,9 +180,9 @@ static int check_ce_cases(void) {
            CE_TEST_COUNT, (unsigned long long)total_ce_instructions, (unsigned long long)total_native_cycles,
            (double)total_cycle_error / CE_TEST_COUNT);
     for (int size_class = 0; size_class < 3; size_class++)
-         printf(" %d:%llu/%llu err%llu", size_class, (unsigned long long)size_ce_instructions[size_class] / size_counts[size_class],
-             (unsigned long long)size_native_cycles[size_class] / size_counts[size_class],
-             (unsigned long long)(size_native_cycles[size_class] > size_ce_instructions[size_class]
+        printf(" %d:%llu/%llu err%llu", size_class, (unsigned long long)size_ce_instructions[size_class] / size_counts[size_class],
+               (unsigned long long)size_native_cycles[size_class] / size_counts[size_class],
+               (unsigned long long)(size_native_cycles[size_class] > size_ce_instructions[size_class]
                              ? size_native_cycles[size_class] - size_ce_instructions[size_class]
                              : size_ce_instructions[size_class] - size_native_cycles[size_class]) / size_counts[size_class]);
     printf("\n");

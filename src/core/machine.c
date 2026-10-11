@@ -260,7 +260,7 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
     machine->cpu.bus = (arm_bus_t){ .context = machine, .read = bus_read, .write = bus_write, .page = bus_page };
     machine->soc.cpu_hz = MACHINE_CPU_HZ;
     machine->soc.board = (sa1110_board_t){ .context = machine, .gpio_changed = soc_gpio_changed, .ssp_exchange = soc_ssp_exchange,
-                                            .power_off = power_off };
+                                           .power_off = power_off };
     machine->sa1111.board = (sa1111_board_t){
         .context = machine, .ssp_exchange = sa1111_ssp_exchange, .interrupt_changed = sa1111_interrupt_changed,
         .gpio_changed = sa1111_gpio_changed, .now = machine_now, .cpu_hz = MACHINE_CPU_HZ, .dram_read = dram_read,
