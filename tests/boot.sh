@@ -45,17 +45,19 @@ app_check() {
     agent=/tmp/jornada-app-agent-$$.sock
     rm -rf "$data" "$agent"
     mkdir -p "$data"
-    cp "$out/pclink.state" "$data/app.state"
+    cp "$out/desktop.state" "$data/app.state"
     port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     HOME="$data" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$data" SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
         ./jornada720 --state="$data/app.state" --net --agent="$agent" --gdb=$port > "$out/app.log" 2>&1 &
     app=$!
     if python3 tests/agent_ping.py "$agent" 60 > /dev/null; then echo "ok   app installs debugmgr"; else echo "FAIL app installs debugmgr"; failed=1; fi
+    for attempt in $(seq 1 20); do grep -q "^debugmgr: ready" "$out/app.log" && break; sleep 0.5; done
+    if grep -q "^debugmgr: ready" "$out/app.log"; then echo "ok   app reports debugmgr ready"; else echo "FAIL app reports debugmgr ready"; failed=1; fi
     if python3 tests/gdb_client.py $port > "$out/app_gdb.log" 2>&1; then echo "ok   app gdb stub"; else echo "FAIL app gdb stub"; cat "$out/app_gdb.log"; failed=1; fi
     if kill -0 $app 2>/dev/null; then echo "ok   app runs"; else echo "FAIL app runs"; cat "$out/app.log"; failed=1; return; fi
     kill -TERM $app
     if wait $app; then echo "ok   app quits"; else echo "FAIL app quits"; cat "$out/app.log"; failed=1; fi
-    check_different "app saves state" "$(shasum < "$out/pclink.state")" "$(shasum < "$data/app.state")"
+    check_different "app saves state" "$(shasum < "$out/desktop.state")" "$(shasum < "$data/app.state")"
     rm -rf "$data" "$agent"
 }
 
@@ -63,7 +65,7 @@ debugmgr_check() {
     socket=/tmp/jornada-rapi-$$.sock
     agent=/tmp/jornada-agent-$$.sock
     rm -f "$socket" "$agent" "$out/debugmgr.state"
-    ./headless --load=$out/pclink.state --seconds=300 --net=0 --rapi="$socket" --agent="$agent" --realtime=4 --save="$out/debugmgr.state" > "$out/debugmgr.log" 2>&1 &
+    ./headless --load=$out/desktop.state --seconds=300 --net=0 --rapi="$socket" --agent="$agent" --realtime=4 --save="$out/debugmgr.state" > "$out/debugmgr.log" 2>&1 &
     emulator=$!
     for attempt in $(seq 1 120); do grep -q "^desktop: connection" "$out/debugmgr.log" && break; sleep 0.5; done
     started=fail
@@ -78,7 +80,7 @@ debugmgr_check() {
     kill -TERM $emulator 2>/dev/null || true
     wait $emulator 2>/dev/null || true
     rm -f "$agent"
-    check "debugmgr installs over PC Link" "$started" ok
+    check "PC Link starts on cable detect and installs debugmgr" "$started" ok
     check "debugmgr starts after a soft reset" "$restarted" ok
 }
 
@@ -102,7 +104,6 @@ gdb_check() {
 run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
-./headless --load=$out/desktop.state --seconds=5 --tap=1:20:226 --tap=2:40:64 --tap=3:200:52 --tap=4:340:118 --save=$out/pclink.state > /dev/null
 debugmgr_check
 app_check
 gdb_check

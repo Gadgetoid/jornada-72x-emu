@@ -32,7 +32,7 @@ The state lives in `~/Library/Application Support/jornada-72x-emu/` on macOS.
 
 ## PC Link and debugmgr
 
-`--net` plugs a serial cable into the PPP gateway. Start PC Link on the Jornada (Start > Programs > Communication > PC Link) and it connects at 57600. `./jornada-rapi` then talks to it over RAPI: `info`, `ls`, `put`, `get`, `run`, `reg` and more (`./jornada-rapi --help`).
+`--net` plugs a serial cable into the PPP gateway. CE sees the cable (GPIO 15 goes low) and starts PC Link, which connects at 57600. `./jornada-rapi` then talks to it over RAPI: `info`, `ls`, `put`, `get`, `run`, `reg` and more (`./jornada-rapi --help`).
 
 `--agent=SOCKET` opens the host mailbox for jornada-72x-tools' debugmgr (`swi 0x51CE`). With both, the app installs debugmgr when PC Link connects: it copies `\Windows\debugmgr.exe`, sets `HKLM\Software\debugmgr` `Transport` to `mailbox`, adds an `HKLM\Init` launch entry and starts it. `jornada-debug --socket=SOCKET` then pings, copies files and runs programs. `make debugmgr` rebuilds the embedded copy from `../jornada-72x-tools`.
 
@@ -50,7 +50,7 @@ The state lives in `~/Library/Application Support/jornada-72x-emu/` on macOS.
 
 ## Tests
 
-`make test` also runs `build/native-check`, which compares 10,000 randomized native memmove cases against libc, 256 calls against CE's ROM, 32 cache-sweep calls against CE, and verifies that a data-TLB miss is filled by native mapping. The boot suite cold boots, calibrates, completes the setup wizard, checks save/resume determinism and battery warnings, and compares an optimized 8-second cold boot with the baseline while requiring cache-sweep hits. It then launches Pocket Word, My Handheld PC, and Pocket Excel; each app must change the screen, match with optimisations on, exercise the fingerprinted memmove hook, and repeat deterministically. It starts PC Link, installs debugmgr over RAPI and pings it through the mailbox, then again after a soft reset. Finally it runs `jornada720 --net --agent` under SDL's dummy drivers, waits for it to install debugmgr by itself, quits it with SIGTERM and checks that the state was saved.
+`make test` also runs `build/native-check`, which compares 10,000 randomized native memmove cases against libc, 256 calls against CE's ROM, 32 cache-sweep calls against CE, and verifies that a data-TLB miss is filled by native mapping. The boot suite cold boots, calibrates, completes the setup wizard, checks save/resume determinism and battery warnings, and compares an optimized 8-second cold boot with the baseline while requiring cache-sweep hits. It then launches Pocket Word, My Handheld PC, and Pocket Excel; each app must change the screen, match with optimisations on, exercise the fingerprinted memmove hook, and repeat deterministically. It plugs in the cable, waits for PC Link to start, installs debugmgr over RAPI and pings it through the mailbox, then again after a soft reset. Finally it runs `jornada720 --net --agent` under SDL's dummy drivers, waits for it to install debugmgr by itself, quits it with SIGTERM and checks that the state was saved.
 
 `make format` and `make format-check` run the pinned uncrustify from `requirements-style.txt`.
 
@@ -83,7 +83,7 @@ CE's ARM page-fault fast path keeps one loaded page per 1 MB section in the page
 
 ## Not done
 
-Recording, serial cable detection (PC Link has to be started by hand), IrDA, PC Card/CF, USB, suspend and battery charging state. Batteries read fixed healthy values. CE resets the RTC on a cold boot, so set the time once in CE; saved states keep it.
+Recording, IrDA, PC Card/CF, USB, suspend and battery charging state. Batteries read fixed healthy values. CE resets the RTC on a cold boot, so set the time once in CE; saved states keep it.
 
 ## Licence
 

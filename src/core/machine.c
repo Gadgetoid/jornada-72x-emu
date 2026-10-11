@@ -235,8 +235,15 @@ static int uart_receive(void *context, int port) {
     return machine->serial_rx[machine->serial_rx_read++ % MACHINE_SERIAL_QUEUE];
 }
 
+void machine_restore_serial_detect(machine_t *machine) {
+    uint32_t bit = 1u << MACHINE_GPIO_SERIAL_DETECT;
+    if (machine->serial_connected) machine->soc.gpio_input &= ~bit;
+    else machine->soc.gpio_input |= bit;
+}
+
 void machine_serial_connect(machine_t *machine, bool connected) {
     machine->serial_connected = connected;
+    sa1110_set_gpio_input(&machine->soc, MACHINE_GPIO_SERIAL_DETECT, !connected);
     if (connected) return;
     machine->serial_rx_read = machine->serial_rx_write;
     machine->serial_tx_read = machine->serial_tx_write;
@@ -383,6 +390,7 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
         .audio = audio_output,
     };
     machine_reset(machine);
+    machine_restore_serial_detect(machine);
     optimiser_init(&machine->optimiser, &machine->cpu);
     return true;
 }

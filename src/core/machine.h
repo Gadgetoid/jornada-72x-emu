@@ -20,6 +20,7 @@
 #define MACHINE_AUDIO_FRAMES 65536
 #define MACHINE_SERIAL_QUEUE 8192
 #define MACHINE_SERIAL_PORT  3
+#define MACHINE_GPIO_SERIAL_DETECT 15
 
 typedef struct {
     uint32_t pa;
@@ -77,6 +78,7 @@ void machine_pen(machine_t *machine, bool down, uint16_t x, uint16_t y);
 void machine_touch(machine_t *machine, bool down, int x, int y);
 uint32_t machine_audio_take(machine_t *machine, int16_t *frames, uint32_t max_frames, uint32_t *rate);
 void machine_serial_connect(machine_t *machine, bool connected);
+void machine_restore_serial_detect(machine_t *machine);
 bool machine_serial_connected(const machine_t *machine);
 void machine_serial_send(machine_t *machine, const uint8_t *data, size_t length);
 size_t machine_serial_take(machine_t *machine, uint8_t *out, size_t max);

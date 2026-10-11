@@ -30,6 +30,7 @@ typedef struct {
     machine_t machine;
     agent_t *agent;
     gdb_t *debugger;
+    bool debugmgr_ready;
     serial_service_t serial;
     desktop_t *desktop;
     char state_path[1024];
@@ -150,6 +151,9 @@ static void step_desktop(app_t *app) {
     if (serial_service_take_desktop(&app->serial) && (app->agent || app->debugger) && !machine_agent_running(&app->machine))
         desktop_install_debugmgr(app->desktop);
     if (desktop_take_status(app->desktop, message, sizeof message)) notice_show(&app->notice, message, NOTICE_MEDIUM);
+    bool ready = machine_agent_running(&app->machine);
+    if (ready != app->debugmgr_ready) fprintf(stderr, ready ? "debugmgr: ready\n" : "debugmgr: stopped\n");
+    app->debugmgr_ready = ready;
 }
 
 static void step_audio(app_t *app) {
