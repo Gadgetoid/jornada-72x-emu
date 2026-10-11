@@ -1,4 +1,5 @@
 #include "core/agent.h"
+#include "core/gdb.h"
 #include "core/machine.h"
 #include "core/state.h"
 #include "net/serial_link.h"
@@ -34,6 +35,7 @@ typedef struct {
     const char *rom;
     const char *eeprom;
     double seconds;
+    bool seconds_given;
     bool log;
     bool optimisations;
     bool profiling;
@@ -59,6 +61,8 @@ typedef struct {
     double net_at;
     double cable_at;
     int tcp_port;
+    int gdb_port;
+    const char *gdb_process;
     net_gateway_options_t net_options;
 } options_t;
 
@@ -66,6 +70,7 @@ typedef struct {
     options_t options;
     machine_t machine;
     agent_t *agent;
+    gdb_t *debugger;
     serial_link_t serial;
     bool soft_reset_done;
     FILE *trace;
@@ -223,7 +228,9 @@ static void usage(void) {
             "  --user-agent=TEXT  the web proxy's user agent\n"
             "  --cable=SECONDS    connect a bare serial cable, with nothing at the other end\n"
             "  --cable-send=SECONDS:TEXT  send bytes down the cable (\\r and \\n allowed); anything CE sends is printed\n"
-            "  --count-pc=PC      count exact executions at a virtual address\n");
+            "  --count-pc=PC      count exact executions at a virtual address\n"
+            "  --gdb=PORT         wait for GDB on 127.0.0.1:PORT before running; runs until GDB detaches or kills, unless --seconds is given\n"
+            "  --gdb-process=NAME debug one process, e.g. hello.exe: breakpoints below 0x02000000 only stop there, and GDB stops when it starts\n");
 }
 
 static bool parse_options(headless_t *headless, int argc, char **argv) {
@@ -233,7 +240,10 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         const char *arg = argv[i];
         if (!strncmp(arg, "--rom=", 6)) options->rom = arg + 6;
         else if (!strncmp(arg, "--eeprom=", 9)) options->eeprom = arg + 9;
-        else if (!strncmp(arg, "--seconds=", 10)) options->seconds = atof(arg + 10);
+        else if (!strncmp(arg, "--seconds=", 10)) {
+            options->seconds = atof(arg + 10);
+            options->seconds_given = true;
+        }
         else if (!strcmp(arg, "--log")) options->log = true;
         else if (!strcmp(arg, "--optimisations")) options->optimisations = true;
         else if (!strcmp(arg, "--profile")) options->profiling = true;
@@ -287,6 +297,8 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
             }
             add_input(headless, event);
         }
+        else if (!strncmp(arg, "--gdb=", 6)) options->gdb_port = atoi(arg + 6);
+        else if (!strncmp(arg, "--gdb-process=", 14)) options->gdb_process = arg + 14;
         else if (!strncmp(arg, "--stop-at=", 10)) options->stop_at = (uint32_t)strtoul(arg + 10, NULL, 16);
         else if (!strncmp(arg, "--count-pc=", 11)) {
             options->count_pc = (uint32_t)strtoul(arg + 11, NULL, 16);
@@ -294,6 +306,7 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         }
         else return false;
     }
+    if (options->gdb_port && !options->seconds_given) options->seconds = 1e7;
     return true;
 }
 
@@ -327,6 +340,21 @@ static bool start_machine(headless_t *headless) {
     if (options->agent_socket && !(headless->agent = agent_create(options->agent_socket, log_stderr))) {
         fprintf(stderr, "headless: cannot listen on agent socket %s\n", options->agent_socket);
         return false;
+    }
+    if (options->gdb_process && !options->gdb_port) {
+        fprintf(stderr, "headless: --gdb-process needs --gdb\n");
+        return false;
+    }
+    if (options->gdb_port) {
+        headless->debugger = gdb_create(machine, options->gdb_port, false, log_stderr);
+        if (!headless->debugger) {
+            fprintf(stderr, "headless: cannot listen for GDB on port %d\n", options->gdb_port);
+            return false;
+        }
+        if (options->gdb_process && !gdb_set_process(headless->debugger, options->gdb_process))
+            fprintf(stderr, "gdb: waiting for %s to start\n", options->gdb_process);
+        fprintf(stderr, "gdb: waiting for a connection: target remote :%d\n", options->gdb_port);
+        gdb_wait_for_client(headless->debugger);
     }
     serial_link_init(&headless->serial, log_stderr);
     if (options->tcp_port) {
@@ -439,6 +467,11 @@ static void pace(headless_t *headless, double wall_start) {
     nanosleep(&wait, NULL);
 }
 
+static void run_cycles(headless_t *headless, uint64_t cycles) {
+    if (!headless->debugger) machine_run(&headless->machine, cycles);
+    else if (!gdb_run(headless->debugger, cycles)) stop_requested = 1;
+}
+
 static void run(headless_t *headless) {
     const options_t *options = &headless->options;
     machine_t *machine = &headless->machine;
@@ -459,7 +492,7 @@ static void run(headless_t *headless) {
         if (headless->agent) agent_poll(headless->agent, &machine->mailbox);
         step_serial(headless, now);
         uint64_t left = total - machine->cpu.cycles;
-        machine_run(machine, left < slice ? left : slice);
+        run_cycles(headless, left < slice ? left : slice);
         pace(headless, wall_start);
         if (options->wav_path) record_audio(headless);
     }
@@ -528,6 +561,7 @@ int main(int argc, char **argv) {
     if (options->screenshot_path && !screenshot(&headless->machine, options->screenshot_path))
         fprintf(stderr, "headless: cannot write %s\n", options->screenshot_path);
     if (headless->trace) fclose(headless->trace);
+    gdb_destroy(headless->debugger);
     agent_destroy(headless->agent);
     serial_link_close(&headless->serial);
     machine_free(&headless->machine);

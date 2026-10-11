@@ -12,7 +12,7 @@ CFLAGS += -Isrc -I$(BUILD) -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
 
 SRC_APP = src/app/desktop.c src/app/serial_service.c src/app/input.c src/app/launch.c src/app/notices.c src/app/paths.c src/app/view.c src/app/main.c
 
-SRC_MACHINE = src/core/agent.c src/core/arm.c src/core/mailbox.c src/core/optimiser.c src/native/native.c src/core/sa1110.c src/core/sa1111.c src/core/sed1356.c src/core/eeprom.c src/core/mcu.c src/core/machine.c src/core/state.c src/util/png.c
+SRC_MACHINE = src/core/agent.c src/core/arm.c src/core/ce.c src/core/gdb.c src/core/mailbox.c src/core/optimiser.c src/native/native.c src/core/sa1110.c src/core/sa1111.c src/core/sed1356.c src/core/eeprom.c src/core/mcu.c src/core/machine.c src/core/state.c src/util/png.c
 
 C_STYLE_SOURCES = $(filter-out src/vendor/%,$(shell git ls-files 'src/**/*.c' 'src/**/*.h' 'tools/*.c'))
 PKG_CONFIG ?= pkg-config

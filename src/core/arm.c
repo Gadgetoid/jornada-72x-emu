@@ -912,7 +912,10 @@ void arm_run(arm_cpu_t *cpu, uint64_t until_cycle) {
             cpu->r[15] = cpu->next_pc;
             continue;
         }
-        if (cpu->before && cpu->before(cpu->hook_context, pc)) break;
+        if (cpu->before && cpu->before(cpu->hook_context, pc)) {
+            cpu->stopped = true;
+            break;
+        }
         if (cpu->optimiser_filter) {
             uint32_t bit = (pc >> 2) & 8191u;
             if ((cpu->optimiser_filter[bit >> 3] & (1u << (bit & 7))) &&

@@ -120,6 +120,7 @@ struct arm_cpu {
     bool (*on_cp15)(void *context, uint32_t op, uint32_t value);
     bool (*before)(void *context, uint32_t pc);
     void (*on_exception)(void *context, uint32_t vector, uint32_t pc);
+    bool stopped;
 };
 
 #define ARM_STATE_SIZE offsetof(arm_cpu_t, bus)
