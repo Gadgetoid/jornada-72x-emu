@@ -65,7 +65,6 @@ app_profile_check() {
     data=/tmp/jornada-profile-$$
     rm -rf "$data"
     mkdir -p "$data/jornada-72x-emu"
-    cp "$out/desktop.state" "$data/jornada-72x-emu/state.bin"
     tcp=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     HOME="$data" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$data" SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
         ./jornada720 --tcp=$tcp > "$out/app-profile.log" 2>&1 &
@@ -78,8 +77,8 @@ app_profile_check() {
     check "app offers the serial port on TCP" "$connected" ok
     kill -TERM $app
     wait $app || true
-    check "app makes its first machine from the old state" "$(sed -n 's/^state=//p' "$data/jornada-72x-emu/machines/jornada-720.ini")" "$data/jornada-72x-emu/state.bin"
-    check_different "app saves the first machine's state" "$(shasum < "$out/desktop.state")" "$(shasum < "$data/jornada-72x-emu/state.bin")"
+    check "app makes its first machine" "$(sed -n 's/^name=//p' "$data/jornada-72x-emu/machines/jornada-720.ini")" "Jornada 720"
+    if [ -s "$data/jornada-72x-emu/machines/jornada-720.state" ]; then echo "ok   app saves the first machine's state"; else echo "FAIL app saves the first machine's state"; failed=1; fi
     rm -rf "$data"
 }
 

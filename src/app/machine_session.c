@@ -8,8 +8,6 @@
 #include "app/paths.h"
 #include "util/file.h"
 
-#define LEGACY_STATE "state.bin"
-
 void machine_session_state_path(char *path, size_t size, machine_t *machine, const char *rom_path) {
     char base[1024];
     app_data_folder(base, sizeof base);
@@ -20,27 +18,12 @@ void machine_session_state_path(char *path, size_t size, machine_t *machine, con
     snprintf(path, size, "%s/state-%s-%08x.bin", base, rom_name, (uint32_t)machine_rom_hash(machine));
 }
 
-static bool legacy_state_path(const rom_set_t *roms, char *state, size_t size) {
-    char base[1024];
-    app_data_folder(base, sizeof base);
-    snprintf(state, size, "%s/" LEGACY_STATE, base);
-    FILE *existing = fopen(state, "rb");
-    if (!existing) return false;
-    fclose(existing);
-    char error[256];
-    machine_t *machine = machine_create(roms->rom, roms->eeprom, error, sizeof error);
-    bool matches = machine && machine_state_matches(machine, state);
-    machine_destroy(machine);
-    return matches;
-}
-
-void machine_session_migrate_profiles(profiles_t *profiles, const rom_set_t *roms, const settings_t *settings, const char *folder) {
+void machine_session_default_profile(profiles_t *profiles, const rom_set_t *roms, const settings_t *settings, const char *folder) {
     if (!roms->rom[0]) return;
     profile_t profile = { .host_time = settings->host_time != 0 };
     snprintf(profile.name, sizeof profile.name, "Jornada 720");
     snprintf(profile.rom, sizeof profile.rom, "%s", roms->rom);
     snprintf(profile.eeprom, sizeof profile.eeprom, "%s", roms->eeprom);
-    if (!legacy_state_path(roms, profile.state, sizeof profile.state)) profile.state[0] = 0;
     profile_make_unique(profiles, &profile, folder);
     profile_save(&profile, folder);
     profiles_load(profiles, folder);

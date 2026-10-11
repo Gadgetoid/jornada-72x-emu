@@ -331,7 +331,7 @@ static int start_machine(app_t *app) {
     library_find_roms(&app->roms);
     library_machines_folder(app->profiles_folder, sizeof app->profiles_folder);
     profiles_load(&app->profiles, app->profiles_folder);
-    if (!app->profiles.count) machine_session_migrate_profiles(&app->profiles, &app->roms, settings, app->profiles_folder);
+    if (!app->profiles.count) machine_session_default_profile(&app->profiles, &app->roms, settings, app->profiles_folder);
     app->current_index = -1;
     if (launch->rom) {
         app->current = (profile_t){ .host_time = settings->host_time != 0 };
@@ -352,7 +352,7 @@ static int start_machine(app_t *app) {
 #ifdef __ANDROID__
         while (app->current_index < 0 && library_first_run_import()) {
             library_find_roms(&app->roms);
-            machine_session_migrate_profiles(&app->profiles, &app->roms, settings, app->profiles_folder);
+            machine_session_default_profile(&app->profiles, &app->roms, settings, app->profiles_folder);
             app->current_index = app->profiles.count ? 0 : -1;
         }
 #endif
