@@ -2,6 +2,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#include "core/state.h"
 
 #define DRAM_BASE   0xC0000000u
 #define DRAM_WINDOW 0x08000000u
@@ -21,6 +24,11 @@
 #define GPIO_SA1111_RESET 20
 #define SA1111_BLOCK_B 1
 #define SA1111_EEPROM_SELECT 0
+#define RTC_COUNT_REGISTER 0x90010004u
+#define SECONDS_TO_2000 946684800
+#define ROM_HEADER_SIGNATURE 0x40u
+#define ROM_ADDRESS_TABLE 0x1348u
+#define ROM_MIN_SIZE (1024u * 1024u)
 
 static void note_unknown(machine_t *machine, uint32_t pa, int size, bool write, uint32_t value) {
     for (int i = 0; i < machine->unknown_count; i++) {
@@ -90,9 +98,17 @@ static bool bus_read(void *context, uint32_t pa, int size, uint32_t *value) {
     return true;
 }
 
+static uint32_t host_clock_seconds(void) {
+    time_t now = time(NULL);
+    struct tm local;
+    localtime_r(&now, &local);
+    return (uint32_t)((int64_t)now + local.tm_gmtoff - SECONDS_TO_2000);
+}
+
 static bool bus_write(void *context, uint32_t pa, int size, uint32_t value) {
     machine_t *machine = context;
     if (pa >= SOC_BASE && pa < SOC_END) {
+        if (machine->host_clock && (pa & ~3u) == RTC_COUNT_REGISTER && value == 0) value = host_clock_seconds();
         if (!sa1110_write(&machine->soc, machine->cpu.cycles, pa & ~3u, value)) note_unknown(machine, pa, size, true, value);
         update_lines(machine);
         machine->cpu.yield = true;
@@ -490,4 +506,105 @@ void machine_print_status(const machine_t *machine, FILE *out) {
     for (int i = 0; i < 16; i++) fprintf(out, "r%-2d %08x%s", i, cpu->r[i], i % 4 == 3 ? "\n" : "  ");
     fprintf(out, "mcu selected %d keys %d pen %d\n", machine->mcu.selected, machine->mcu.key_count, machine->mcu.pen_down);
     if (machine->optimiser.enabled) optimiser_print(&machine->optimiser, out);
+}
+
+static uint32_t read_word(const uint8_t *bytes) {
+    return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 | (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
+}
+
+bool machine_rom_supported(const uint8_t *header, size_t header_size, size_t rom_size) {
+    return rom_size >= ROM_MIN_SIZE && rom_size <= MACHINE_ROM_SIZE && header_size >= MACHINE_ROM_HEADER_SIZE
+           && !memcmp(header + ROM_HEADER_SIGNATURE, "ECEC", 4) && read_word(header + ROM_ADDRESS_TABLE) == 0x88000000u
+           && read_word(header + ROM_ADDRESS_TABLE + 4) == DRAM_BASE;
+}
+
+bool machine_eeprom_supported(size_t size) {
+    return size == EEPROM_SIZE;
+}
+
+machine_t *machine_create(const char *rom_path, const char *eeprom_path, char *error, size_t error_size) {
+    FILE *file = fopen(rom_path, "rb");
+    uint8_t header[MACHINE_ROM_HEADER_SIZE];
+    size_t header_size = file ? fread(header, 1, sizeof header, file) : 0;
+    long rom_size = file && fseek(file, 0, SEEK_END) == 0 ? ftell(file) : -1;
+    if (file) fclose(file);
+    if (rom_size < 0) {
+        snprintf(error, error_size, "cannot read %s", rom_path);
+        return NULL;
+    }
+    if (!machine_rom_supported(header, header_size, (size_t)rom_size)) {
+        snprintf(error, error_size, "%s isn't a Jornada 720 ROM", rom_path);
+        return NULL;
+    }
+    machine_t *machine = calloc(1, sizeof *machine);
+    if (!machine) {
+        snprintf(error, error_size, "out of memory");
+        return NULL;
+    }
+    if (!machine_init(machine, rom_path, eeprom_path && eeprom_path[0] ? eeprom_path : NULL)) {
+        snprintf(error, error_size, "cannot load %s or %s", rom_path, eeprom_path && eeprom_path[0] ? eeprom_path : "the EEPROM");
+        machine_destroy(machine);
+        return NULL;
+    }
+    return machine;
+}
+
+void machine_destroy(machine_t *machine) {
+    if (!machine) return;
+    machine_free(machine);
+    free(machine);
+}
+
+mailbox_t *machine_mailbox(machine_t *machine) {
+    return &machine->mailbox;
+}
+
+bool machine_save(machine_t *machine, const char *path, int64_t host_time) {
+    return state_save(machine, path, (uint64_t)host_time);
+}
+
+bool machine_load(machine_t *machine, const char *path, int64_t host_time) {
+    return state_load(machine, path, (uint64_t)host_time) == STATE_OK;
+}
+
+bool machine_state_matches(machine_t *machine, const char *path) {
+    return state_matches(machine, path);
+}
+
+uint64_t machine_rom_hash(machine_t *machine) {
+    return state_rom_hash(machine);
+}
+
+void machine_set_host_clock(machine_t *machine, bool enabled) {
+    machine->host_clock = enabled;
+}
+
+size_t machine_audio(machine_t *machine, int16_t *samples, size_t max, uint32_t *rate) {
+    return machine_audio_take(machine, samples, (uint32_t)(max / MACHINE_AUDIO_CHANNELS), rate) * MACHINE_AUDIO_CHANNELS;
+}
+
+bool machine_screen(machine_t *machine, uint32_t *pixels) {
+    bool lit = sed1356_render(&machine->display, pixels, MACHINE_SCREEN_WIDTH, MACHINE_SCREEN_HEIGHT);
+    for (int i = 0; i < MACHINE_SCREEN_WIDTH * MACHINE_SCREEN_HEIGHT; i++) {
+        uint32_t rgb = pixels[i];
+        pixels[i] = 0xFF000000u | (rgb & 0xFF) << 16 | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+    }
+    return lit;
+}
+
+bool machine_optimisations(machine_t *machine) {
+    return machine->optimiser.enabled;
+}
+
+key_layout_t machine_key_layout(machine_t *machine) {
+    (void)machine;
+    return KEY_LAYOUT_US;
+}
+
+bool machine_suspended(machine_t *machine) {
+    return machine->powered_off;
+}
+
+void machine_power_button(machine_t *machine, bool down) {
+    machine_key(machine, MACHINE_POWER_KEY, down);
 }

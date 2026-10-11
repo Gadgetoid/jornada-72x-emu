@@ -5,6 +5,7 @@
 
 #include "core/arm.h"
 #include "core/eeprom.h"
+#include "core/key_text.h"
 #include "core/mailbox.h"
 #include "core/mcu.h"
 #include "core/optimiser.h"
@@ -13,6 +14,7 @@
 #include "core/sed1356.h"
 
 #define MACHINE_CPU_HZ   206400000u
+#define MACHINE_CLOCK_HZ MACHINE_CPU_HZ
 #define MACHINE_ROM_SIZE 0x02000000u
 #define MACHINE_DRAM_SIZE 0x02000000u
 
@@ -23,6 +25,10 @@
 #define MACHINE_GPIO_SERIAL_DETECT 15
 #define MACHINE_POWER_KEY 0x7F
 #define MACHINE_SPEED_MAX 2
+#define MACHINE_SCREEN_WIDTH 640
+#define MACHINE_SCREEN_HEIGHT 240
+#define MACHINE_AUDIO_CHANNELS 2
+#define MACHINE_ROM_HEADER_SIZE 0x1400
 
 typedef struct {
     uint32_t pa;
@@ -67,6 +73,7 @@ struct machine {
     uint32_t serial_rx_read, serial_rx_write;
     uint8_t serial_tx[MACHINE_SERIAL_QUEUE];
     uint32_t serial_tx_read, serial_tx_write;
+    bool host_clock;
 };
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
@@ -93,3 +100,20 @@ uint64_t machine_cycles(const machine_t *machine);
 bool machine_agent_running(const machine_t *machine);
 void machine_print_status(const machine_t *machine, FILE *out);
 double machine_seconds(const machine_t *machine);
+
+bool       machine_rom_supported(const uint8_t *header, size_t header_size, size_t rom_size);
+bool       machine_eeprom_supported(size_t size);
+machine_t *machine_create(const char *rom_path, const char *eeprom_path, char *error, size_t error_size);
+void       machine_destroy(machine_t *machine);
+mailbox_t *machine_mailbox(machine_t *machine);
+bool       machine_save(machine_t *machine, const char *path, int64_t host_time);
+bool       machine_load(machine_t *machine, const char *path, int64_t host_time);
+bool       machine_state_matches(machine_t *machine, const char *path);
+uint64_t   machine_rom_hash(machine_t *machine);
+void       machine_set_host_clock(machine_t *machine, bool enabled);
+size_t     machine_audio(machine_t *machine, int16_t *samples, size_t max, uint32_t *rate);
+bool       machine_screen(machine_t *machine, uint32_t *pixels);
+bool       machine_optimisations(machine_t *machine);
+key_layout_t machine_key_layout(machine_t *machine);
+bool       machine_suspended(machine_t *machine);
+void       machine_power_button(machine_t *machine, bool down);

@@ -14,4 +14,6 @@ typedef enum {
 
 bool state_save(const machine_t *machine, const char *path, uint64_t host_time);
 state_result_t state_load(machine_t *machine, const char *path, uint64_t host_time);
+bool state_matches(const machine_t *machine, const char *path);
+uint64_t state_rom_hash(const machine_t *machine);
 const char *state_describe(state_result_t result);

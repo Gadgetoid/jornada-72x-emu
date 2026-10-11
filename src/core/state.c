@@ -196,6 +196,25 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
     return result;
 }
 
+uint64_t state_rom_hash(const machine_t *machine) {
+    return hash_bytes(machine->rom, MACHINE_ROM_SIZE);
+}
+
+bool state_matches(const machine_t *machine, const char *path) {
+    gzFile file = gzopen(path, "rb");
+    if (!file) return false;
+    char magic[TAG_SIZE], tag[TAG_SIZE];
+    uint32_t version, size;
+    state_header_t header;
+    bool readable = gzread(file, magic, TAG_SIZE) == TAG_SIZE && !memcmp(magic, STATE_MAGIC, TAG_SIZE)
+                    && gzread(file, &version, sizeof version) == sizeof version && version == STATE_VERSION
+                    && gzread(file, tag, TAG_SIZE) == TAG_SIZE && !memcmp(tag, "header", sizeof "header")
+                    && gzread(file, &size, sizeof size) == sizeof size && size == sizeof header
+                    && gzread(file, &header, sizeof header) == sizeof header;
+    gzclose(file);
+    return readable && header.dram_size == machine->dram_size && header.rom_hash == state_rom_hash(machine);
+}
+
 const char *state_describe(state_result_t result) {
     switch (result) {
     case STATE_OK: return "state loaded";

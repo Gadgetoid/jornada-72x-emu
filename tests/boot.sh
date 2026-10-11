@@ -114,6 +114,7 @@ gdb_check() {
 }
 
 ./headless --seconds=100 $calibrate --save=$out/calibrated.state --screenshot=$out/calibrated.png > /dev/null
+./headless --seconds=100 $calibrate --host-clock --screenshot=$out/host-clock.png > /dev/null
 ./headless --load=$out/calibrated.state --seconds=30 $wizard --save=$out/desktop.state --screenshot=$out/desktop.png > /dev/null
 ./headless --load=$out/desktop.state --seconds=90 --screenshot=$out/idle.png > /dev/null
 ./headless --load=$out/desktop.state --seconds=90 --backup=0x3ff --screenshot=$out/idle-full.png > /dev/null
@@ -132,6 +133,7 @@ debugmgr_check
 app_check
 gdb_check
 
+check_different "host clock sets the date at a cold boot" "$(shasum < $out/host-clock.png)" "$(shasum < $out/calibrated.png)"
 check "resume matches continuous run" "$(shasum < $out/desktop.png)" "$(shasum < $out/continuous.png)"
 check "desktop stays clear of battery warnings" "$(shasum < $out/idle-full.png)" "$(shasum < $out/idle.png)"
 check "cold-start screen matches with optimisations" "$(shasum < $out/cold-start.png)" "$(shasum < $out/cold-start-optimised.png)"
