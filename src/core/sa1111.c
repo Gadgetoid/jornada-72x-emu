@@ -46,10 +46,17 @@
 #define AUDIO_MAX_FRAMES 2048
 
 static void update_interrupt(sa1111_t *chip) {
-    bool level = (chip->intstat[0] & chip->inten[0]) || (chip->intstat[1] & chip->inten[1]);
-    if (level == chip->interrupt_level) return;
+    uint32_t pending[2] = { chip->intstat[0] & chip->inten[0], chip->intstat[1] & chip->inten[1] };
+    bool level = pending[0] || pending[1];
+    bool changed = pending[0] != chip->interrupt_pending[0] || pending[1] != chip->interrupt_pending[1];
+    chip->interrupt_pending[0] = pending[0];
+    chip->interrupt_pending[1] = pending[1];
+    if (level == chip->interrupt_level && !(level && changed)) return;
+    bool pulse = level && chip->interrupt_level;
     chip->interrupt_level = level;
-    if (chip->board.interrupt_changed) chip->board.interrupt_changed(chip->board.context, level);
+    if (!chip->board.interrupt_changed) return;
+    if (pulse) chip->board.interrupt_changed(chip->board.context, false);
+    chip->board.interrupt_changed(chip->board.context, level);
 }
 
 void sa1111_reset(sa1111_t *chip) {
