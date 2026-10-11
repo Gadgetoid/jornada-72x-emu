@@ -34,6 +34,7 @@
 #define AGENT_TIMEOUT      (MACHINE_CPU_HZ * 5ull)
 #define AGENT_PROBE_TIMEOUT (MACHINE_CPU_HZ * 2ull)
 #define RUN_TIMEOUT        (MACHINE_CPU_HZ * 30ull)
+#define PAGE_IN_TIMEOUT    (MACHINE_CPU_HZ * 2ull)
 #define AGENT_PING         1
 #define AGENT_WRITE        2
 #define AGENT_READ         3
@@ -109,6 +110,12 @@ struct gdb {
     bool every;
     bool paused;
     bool stop;
+    bool paging_in;
+    bool paged_in;
+    uint32_t page_pc;
+    uint32_t page_sp;
+    uint32_t page_mode;
+    int page_process;
     int listener;
     int client;
     bool no_ack;
@@ -352,7 +359,7 @@ static void update_debug(gdb_t *gdb) {
     gdb->every = gdb->stepping || gdb->resume_skip || gdb->waiting_for_process;
     bool active = !gdb->paused && gdb->client >= 0;
     bool catching = gdb->inferior && gdb->catch_faults && gdb->fault_report;
-    bool wanted = active && (gdb->every || gdb->breakpoint_count || gdb->entry_break_count || catching);
+    bool wanted = gdb->paging_in || (active && (gdb->every || gdb->breakpoint_count || gdb->entry_break_count || catching));
     cpu->before = wanted || gdb->chained.before ? on_before : NULL;
     cpu->on_exception = (active && gdb->inferior) || gdb->chained.on_exception ? on_exception : NULL;
 }
@@ -466,8 +473,17 @@ static bool check_before(gdb_t *gdb, uint32_t pc) {
     return false;
 }
 
+static bool page_returned(gdb_t *gdb, uint32_t pc) {
+    arm_cpu_t *cpu = machine_cpu(gdb);
+    if (pc != gdb->page_pc || cpu->r[13] != gdb->page_sp || (cpu->cpsr & ARM_PSR_MODE) != gdb->page_mode) return false;
+    if (current_process(gdb) != gdb->page_process) return false;
+    gdb->paged_in = true;
+    return true;
+}
+
 static bool on_before(void *context, uint32_t pc) {
     gdb_t *gdb = context;
+    if (gdb->paging_in) return page_returned(gdb, pc);
     if (gdb->chained.before && gdb->chained.before(gdb->chained.context, pc)) return true;
     if (gdb->paused || gdb->client < 0 || (!gdb->every && !filter_hit(gdb, pc))) return false;
     if (!check_before(gdb, pc)) return false;
@@ -715,6 +731,32 @@ static void handle_breakpoint_packet(gdb_t *gdb, const char *packet) {
     send_packet(gdb, ok ? "OK" : "E0e");
 }
 
+static bool page_in(gdb_t *gdb, uint32_t va) {
+    arm_cpu_t *cpu = machine_cpu(gdb);
+    uint32_t pc = cpu->r[15];
+    if (!gdb->halted || gdb->post_mortem || !thread_mode(cpu, pc)) return false;
+    int process = current_process(gdb), target = memory_process(gdb), owner;
+    uint32_t offset;
+    if (process < 0 || (target != CE_CURRENT && target != process)) return false;
+    if (!split_address(va, process, &owner, &offset) || owner != process) return false;
+    gdb->page_pc = pc;
+    gdb->page_sp = cpu->r[13];
+    gdb->page_mode = cpu->cpsr & ARM_PSR_MODE;
+    gdb->page_process = process;
+    gdb->paged_in = false;
+    gdb->paging_in = true;
+    update_debug(gdb);
+    cpu->last_pc = pc;
+    arm_raise_data_abort(cpu, va, false);
+    cpu->r[15] = cpu->next_pc;
+    uint64_t start = machine_cycles(gdb->machine);
+    while (!gdb->paged_in && machine_cycles(gdb->machine) - start < PAGE_IN_TIMEOUT) machine_run(gdb->machine, RUN_QUANTUM);
+    gdb->paging_in = false;
+    update_debug(gdb);
+    if (!gdb->paged_in) logf_gdb(gdb, "gdb: paging in %08x didn't return to %08x\n", va, pc);
+    return gdb->paged_in;
+}
+
 static void handle_read_memory(gdb_t *gdb, const char *packet) {
     const char *cursor = packet + 1;
     uint32_t address = parse_hex(&cursor);
@@ -724,6 +766,8 @@ static void handle_read_memory(gdb_t *gdb, const char *packet) {
     uint8_t *data = gdb->data;
     uint32_t done = 0;
     while (done < length && ce_read(&gdb->ce, address + done, memory_process(gdb), data + done, 1)) done++;
+    if (!done && length && page_in(gdb, address))
+        while (done < length && ce_read(&gdb->ce, address + done, memory_process(gdb), data + done, 1)) done++;
     if (!done && length) { send_packet(gdb, "E14"); return; }
     hex_bytes(gdb->reply, data, done);
     send_packet(gdb, gdb->reply);
