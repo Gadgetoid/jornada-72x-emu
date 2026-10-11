@@ -1,5 +1,6 @@
 #include "core/agent.h"
 #include "core/gdb.h"
+#include "core/key_text.h"
 #include "core/machine.h"
 #include "core/state.h"
 #include "net/serial_link.h"
@@ -11,7 +12,8 @@
 #include <string.h>
 #include <time.h>
 
-#define INPUT_MAX 256
+#define INPUT_MAX 1024
+#define TYPE_STEP_SECONDS 0.02
 #define PROFILE_SLOTS 4096
 
 typedef enum { INPUT_KEY, INPUT_TAP, INPUT_SERIAL } input_kind_t;
@@ -102,6 +104,24 @@ static void request_stop(int signal_number) {
 
 static void add_input(headless_t *headless, input_event_t event) {
     if (headless->input_count < INPUT_MAX) headless->inputs[headless->input_count++] = event;
+}
+
+static void type_text(headless_t *headless, double at, const char *text) {
+    for (const char *cursor = text; *cursor; cursor++) {
+        char character = *cursor;
+        if (character == '\\' && cursor[1] == 'n') {
+            character = '\n';
+            cursor++;
+        }
+        uint8_t scancode;
+        bool shifted;
+        if (!key_text_find(KEY_LAYOUT_US, character, &scancode, &shifted)) continue;
+        if (shifted) add_input(headless, (input_event_t){ .at = at, .kind = INPUT_KEY, .code = KEY_TEXT_SHIFT, .down = true });
+        add_input(headless, (input_event_t){ .at = at, .kind = INPUT_KEY, .code = scancode, .down = true });
+        add_input(headless, (input_event_t){ .at = at + TYPE_STEP_SECONDS, .kind = INPUT_KEY, .code = scancode, .down = false });
+        if (shifted) add_input(headless, (input_event_t){ .at = at + TYPE_STEP_SECONDS, .kind = INPUT_KEY, .code = KEY_TEXT_SHIFT, .down = false });
+        at += 2 * TYPE_STEP_SECONDS;
+    }
 }
 
 static void profile_sample(headless_t *headless, uint32_t pc, uint32_t pid) {
@@ -213,6 +233,7 @@ static void usage(void) {
             "  --backup=N         backup battery ADC reading (default 0x3C0)\n"
             "  --rtc=N            RTC counter at power on\n"
             "  --key=T:SCAN       press and release an MCU scan code at T seconds\n"
+            "  --type=T:TEXT      type text from T seconds, with \\n for Enter\n"
             "  --tap=T:X:Y[:HOLD] touch the screen at pixel X,Y at T seconds (default hold 0.2s)\n"
             "  --dump=VA:LEN:PATH write virtual memory (hex VA and length) to a file at the end\n"
             "  --screenshot=PATH  write the LCD as a PNG at the end\n"
@@ -263,6 +284,11 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
             if (sscanf(arg + 6, "%lf:%i", &at, &code) != 2) return false;
             add_input(headless, (input_event_t){ .at = at, .kind = INPUT_KEY, .code = code, .down = true });
             add_input(headless, (input_event_t){ .at = at + 0.1, .kind = INPUT_KEY, .code = code, .down = false });
+        } else if (!strncmp(arg, "--type=", 7)) {
+            char *text;
+            double at = strtod(arg + 7, &text);
+            if (*text != ':') return false;
+            type_text(headless, at, text + 1);
         } else if (!strncmp(arg, "--tap=", 6)) {
             double at, hold = 0.2;
             int x, y;

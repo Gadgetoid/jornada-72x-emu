@@ -93,6 +93,12 @@ power_check() {
     check "On/Off key resumes Pocket Word" "$(shasum < $out/wake.png)" "$(shasum < $out/awake.png)"
 }
 
+type_check() {
+    word="--tap=1:514:35:0.1 --tap=1.5:514:35:0.1"
+    ./headless --load=$out/desktop.state $word --type='6:Hello, World! (1+2) "x_y"' --seconds=20 --screenshot=$out/typed.png > /dev/null
+    check_different "typing reaches Pocket Word" "$(shasum < $out/typed.png)" "$(shasum < $out/pocket-word.png)"
+}
+
 speed_check() {
     single=$(./headless --seconds=2 | sed -n 's/.* \([0-9][0-9]*\) instructions.*/\1/p' | head -1)
     double=$(./headless --seconds=2 --speed=2 | sed -n 's/.* \([0-9][0-9]*\) instructions.*/\1/p' | head -1)
@@ -120,6 +126,7 @@ run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
 power_check
+type_check
 speed_check
 debugmgr_check
 app_check
