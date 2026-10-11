@@ -5,7 +5,7 @@ HP Jornada 720 emulator: an ARMv4 interpreter with the SA-1110, SA-1111, Epson S
 ## Install
 
 - **macOS (Apple silicon):** `Jornada720.app`, from a release or `make app`. It isn't notarised: allow it in System Settings > Privacy & Security > Open Anyway, or run `xattr -dr com.apple.quarantine Jornada720.app`.
-- **Debian 12 or later and Ubuntu 24.04 or later:** the `.deb`, from a release or `make deb`. It installs `jornada720`, `jornada720-headless` and `jornada-rapi`, with a desktop entry.
+- **Debian 12 or later and Ubuntu 24.04 or later:** the `.deb`, from a release or `make deb`. It installs `jornada720`, `jornada720-headless` and `jornada-rapi`, with a desktop entry, and `mkcard.sh` in `/usr/share/jornada-72x-emu`.
 - **Android (arm64, Android 9 or later):** the `.apk`, from a release or `make apk`. See Android.
 
 ## Build
@@ -36,10 +36,25 @@ The menus replace the old Cmd keys:
 - State: Save State (Cmd-S), Load State (Cmd-L), snapshots to and from any file, Show State Folder. The state is also saved on quit and every minute, a backup goes in `snapshots/Backups` every 10 minutes and before a load or reset, and the clock is advanced by the time away. An unreadable state is moved aside to `.old`.
 - Edit: Copy Screen, Paste as Typing, Save Screenshot.
 - View: 50% to 200%, Zoom In and Out, Full Screen.
-- Devices: the serial port (not connected, PPP network, pseudo-terminal, TCP port or a host serial port), Sound.
+- Devices: Insert Card Image (Cmd-O) and Eject Card (Cmd-E) for the CompactFlash slot, the same with Shift for the PC Card slot, the serial port (not connected, PPP network, pseudo-terminal, TCP port or a host serial port), Sound.
 - PC Link: send files, copy My Documents back, a shared folder synced with My Documents, Pocket IE proxy, RAPI over the network, connection speed.
 
 New Machine's clock setting sets CE's clock from the host's local time at the first boot, as CE clears it then. `--fresh` cold boots and `--state=PATH` uses another state file. `--speed` and `--optimisations` set the CPU speed and optimisations and are remembered.
+
+## Storage cards
+
+Both slots take a CompactFlash card in ATA mode, backed by a raw disk image: the CompactFlash slot and the PC Card slot (as a CF card in an adapter would be). CE mounts the first card it finds as `\Storage Card` and a second as `\Storage Card2`; with both inserted at once, the PC Card slot's is `\Storage Card`. Make an image, optionally copying folders onto it, and insert it with `--card` (CompactFlash) or `--pc-card`, after `--load` if both are given:
+
+```sh
+tools/mkcard.sh card.img 64 ~/some/folder
+./jornada720 --card=card.img
+```
+
+`make card` does the same (`CARD=card.img`, `CARD_MB=64`, `CARD_FILES=folders`). `mkcard.sh` uses `hdiutil` on macOS and `sfdisk`, `mkfs.fat` and `mtools` on Linux. To read an image on the host, `hdiutil attach -imagekey diskimage-class=CRawDiskImage card.img` on macOS or `mcopy -i card.img@@512` on Linux; eject it in the emulator first. Writes go straight to the image.
+
+Cards can be inserted and ejected while CE runs (Devices, or dropping a `.img` file on the window for the CompactFlash slot); inserting a different image ejects the old one and inserts the new one a second later so CE sees the change. A saved state keeps its cards and reopens the images on load; a missing image is ejected. The Insert Card Image dialog opens in the `cards` folder of the data folder. headless takes `--card`, `--pc-card`, `--eject-card=T` and `--eject-pc-card=T`.
+
+To install an app from a card, copy its CAB or EXE onto the image with `mkcard.sh` and open it from `\Storage Card` in My Handheld PC.
 
 ## PC Link and debugmgr
 
@@ -63,11 +78,11 @@ Machine > GDB Server listens on all interfaces on port 1234 (`gdb_port` in `jorn
 
 ## Android
 
-The first run asks for the ROM and EEPROM, from the phone's storage or Downloads, and copies them into the app; Machine > Import ROMs adds more later. A finger is the stylus. In landscape the controls run down both sides of the screen, and in portrait across the top: Hide, Menu (or Back) for the menus, Esc, Tab, Ctrl, Alt and Shift (which stay down until tapped again), Kbd for the phone's keyboard, Power for the On/Off key, the arrows and Enter. Optimisations are on by default. Files live under `Android/data/org.jornada_emu.jornada/files/jornada-72x-emu`. Leaving the app saves the machine.
+The first run asks for the ROM and EEPROM, from the phone's storage or Downloads, and copies them into the app; Machine > Import ROMs and Cards adds more later, and copies card images into the `cards` folder. A finger is the stylus. In landscape the controls run down both sides of the screen, and in portrait across the top: Hide, Menu (or Back) for the menus, Esc, Tab, Ctrl, Alt and Shift (which stay down until tapped again), Kbd for the phone's keyboard, Power for the On/Off key, the arrows and Enter. Optimisations are on by default. Files live under `Android/data/org.jornada_emu.jornada/files/jornada-72x-emu`. Leaving the app saves the machine.
 
 ## Tests
 
-`make test` also runs `build/native-check`, which compares 10,000 randomized native memmove cases against libc, 256 calls against CE's ROM, 32 cache-sweep calls against CE, and verifies that a data-TLB miss is filled by native mapping. The boot suite cold boots, calibrates, completes the setup wizard, checks save/resume determinism and battery warnings, and compares an optimized 8-second cold boot with the baseline while requiring cache-sweep hits. It then launches Pocket Word, My Handheld PC, and Pocket Excel; each app must change the screen, match with optimisations on, exercise the fingerprinted memmove hook, and repeat deterministically. It plugs in the cable, waits for PC Link to start, installs debugmgr over RAPI and pings it through the mailbox, then again after a soft reset. It suspends and wakes the machine with the On/Off key, types into Pocket Word, checks that `--speed=2` runs more instructions and that `--host-clock` sets the date. Finally it runs `jornada720 --net --agent --gdb` under SDL's dummy drivers, waits for it to install debugmgr by itself, quits it with SIGTERM and checks that the state was saved, then runs it with an empty data folder and checks that it makes a first machine, saves its state and that `--tcp` listens.
+`make test` also runs `build/native-check`, which compares 10,000 randomized native memmove cases against libc, 256 calls against CE's ROM, 32 cache-sweep calls against CE, and verifies that a data-TLB miss is filled by native mapping. The boot suite cold boots, calibrates, completes the setup wizard, checks save/resume determinism and battery warnings, and compares an optimized 8-second cold boot with the baseline while requiring cache-sweep hits. It then launches Pocket Word, My Handheld PC, and Pocket Excel; each app must change the screen, match with optimisations on, exercise the fingerprinted memmove hook, and repeat deterministically. It plugs in the cable, waits for PC Link to start, installs debugmgr over RAPI and pings it through the mailbox, then again after a soft reset. It makes CompactFlash and PC Card images with `mkcard.sh`, inserts both into the desktop and saves a state, then loads that state with PC Link and checks over RAPI that CE mounts them as `\Storage Card` and `\Storage Card2`, that a file written on the host reads back, and that a file put over RAPI lands in the image; that the saved state keeps the cards and that ejecting them removes them from My Handheld PC. It suspends and wakes the machine with the On/Off key, types into Pocket Word, checks that `--speed=2` runs more instructions and that `--host-clock` sets the date. Finally it runs `jornada720 --net --agent --gdb` under SDL's dummy drivers, waits for it to install debugmgr by itself, quits it with SIGTERM and checks that the state was saved, then runs it with an empty data folder and checks that it makes a first machine, saves its state and that `--tcp` listens.
 
 `make format` and `make format-check` run the pinned uncrustify from `requirements-style.txt`.
 
@@ -100,7 +115,7 @@ CE's ARM page-fault fast path keeps one loaded page per 1 MB section in the page
 
 ## Not done
 
-Recording, IrDA, PC Card/CF, USB and battery charging state. Batteries read fixed healthy values. CE resets the RTC on a cold boot; machines made with the clock setting on get the host's time instead.
+Recording, IrDA, USB, cards other than CompactFlash storage (modems, network cards) and battery charging state. Socket power from the SA-1111 GPIO A lines isn't modelled; a card answers whenever it's inserted. Batteries read fixed healthy values. CE resets the RTC on a cold boot; machines made with the clock setting on get the host's time instead.
 
 ## Licence
 
