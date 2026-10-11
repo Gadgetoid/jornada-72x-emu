@@ -42,6 +42,8 @@ The state lives in `~/Library/Application Support/jornada-72x-emu/` on macOS.
 
 `make test` also runs `build/native-check`, which compares 10,000 randomized native memmove cases against libc, including overlap and page crossings, and checks atomic fallback for an unmapped destination. The boot suite cold boots, calibrates, completes the setup wizard, and checks save/resume determinism and battery warnings. It then launches Pocket Word, My Handheld PC, and Pocket Excel from the configured desktop; each app must change the screen, match with optimisations on, exercise the fingerprinted memmove hook, and produce the same screen on a repeated optimized run. Finally it runs `jornada720` on the desktop state under SDL's dummy drivers, quits it with SIGTERM and checks that the state was saved.
 
+`make format` and `make format-check` run the pinned uncrustify from `requirements-style.txt`.
+
 `make difftest` compares random ARM instructions against Unicorn's SA-1110 model (`pip install unicorn`). Unaligned accesses are skipped because QEMU doesn't follow the ARMv4 rules for them.
 
 ## Optimisations
