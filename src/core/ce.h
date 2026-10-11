@@ -38,3 +38,5 @@ bool ce_read(ce_t *ce, uint32_t va, int process, uint8_t *data, uint32_t length)
 bool ce_write(ce_t *ce, uint32_t va, int process, const uint8_t *data, uint32_t length);
 bool ce_read_word(ce_t *ce, uint32_t va, int process, uint32_t *value);
 int  ce_modules(ce_t *ce, ce_module_t *modules, int max);
+bool ce_first_module(ce_t *ce, uint32_t *module);
+bool ce_module_entry(ce_t *ce, uint32_t module, uint32_t *entry);

@@ -88,6 +88,11 @@ def main():
     check("breakpoint remove", client.request("z0,%x,4" % IRQ_VECTOR) == "OK")
     stop = client.request("s")
     check("step", stop.startswith("T05") and client.register(PC_REGISTER) == handler, hex(client.register(PC_REGISTER)))
+    client.send("c")
+    time.sleep(0.5)
+    client.connection.sendall(b"\x03")
+    stop = client.receive()
+    check("interrupt", stop.startswith("T02"), stop)
     data = bytes(range(256)) * 32
     full = "M0%x,%x:%s" % (SCRATCH, len(data) - 8, data[:-8].hex())
     check("full packet size", len(full) == PACKET_SIZE, str(len(full)))

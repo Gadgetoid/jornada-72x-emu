@@ -82,10 +82,10 @@ debugmgr_check() {
 
 gdb_check() {
     port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-    ./headless --load=$out/desktop.state --seconds=20 --gdb=$port > "$out/gdb.log" 2>&1 &
+    ./headless --load=$out/desktop.state --gdb=$port > "$out/gdb.log" 2>&1 &
     stub=$!
-    if python3 tests/gdb_client.py $port > "$out/gdb_client.log" 2>&1; then echo "ok   gdb stub"; else echo "FAIL gdb stub"; cat "$out/gdb_client.log" "$out/gdb.log"; failed=1; fi
-    wait $stub
+    if python3 tests/gdb_client.py $port > "$out/gdb_client.log" 2>&1; then echo "ok   gdb stub"; else echo "FAIL gdb stub"; cat "$out/gdb_client.log" "$out/gdb.log"; failed=1; kill $stub; fi
+    wait $stub || true
 }
 
 ./headless --seconds=100 $calibrate --save=$out/calibrated.state --screenshot=$out/calibrated.png > /dev/null

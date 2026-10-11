@@ -259,9 +259,17 @@ static bool module_valid(ce_t *ce, uint32_t module) {
     return kernel_word(ce, module + MODULE_LAYOUT.self, &self) && self == module;
 }
 
+bool ce_first_module(ce_t *ce, uint32_t *module) {
+    return ce_ready(ce) && kinfo(ce, KINX_MODULES, module) && module_valid(ce, *module);
+}
+
+bool ce_module_entry(ce_t *ce, uint32_t module, uint32_t *entry) {
+    return module_valid(ce, module) && kernel_word(ce, module + MODULE_LAYOUT.entry, entry) && *entry && *entry != 0xFFFFFFFFu;
+}
+
 int ce_modules(ce_t *ce, ce_module_t *modules, int max) {
     uint32_t module;
-    if (!ce_ready(ce) || !kinfo(ce, KINX_MODULES, &module)) return 0;
+    if (!ce_first_module(ce, &module)) return 0;
     int count = 0;
     for (int guard = 0; module && guard < CE_MODULE_MAX * 4 && count < max && module_valid(ce, module); guard++) {
         uint32_t name, base, in_use, entry;

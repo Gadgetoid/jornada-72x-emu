@@ -101,6 +101,10 @@ struct gdb {
     bool elf_libraries;
     uint32_t library_hash;
     int library_check;
+    uint32_t module_head;
+    uint32_t new_module;
+    uint32_t entry_breaks[BREAKPOINT_MAX];
+    int entry_break_count;
 
     uint8_t input[PACKET_MAX * 2];
     size_t input_length;
@@ -311,13 +315,34 @@ static bool filter_hit(const gdb_t *gdb, uint32_t pc) {
 }
 
 static bool on_before(void *context, uint32_t pc);
+static void on_exception(void *context, uint32_t vector, uint32_t pc);
+static uint32_t current_library_hash(gdb_t *gdb);
 
 static void update_debug(gdb_t *gdb) {
+    arm_cpu_t *cpu = machine_cpu(gdb);
     memset(gdb->filter, 0, sizeof gdb->filter);
     for (int i = 0; i < gdb->breakpoint_count; i++) filter_add(gdb, gdb->breakpoints[i]);
+    for (int i = 0; i < gdb->entry_break_count; i++) filter_add(gdb, gdb->entry_breaks[i]);
     gdb->every = gdb->stepping || gdb->resume_skip || gdb->waiting_for_process;
-    bool wanted = !gdb->paused && gdb->client >= 0 && (gdb->every || gdb->breakpoint_count);
-    machine_cpu(gdb)->before = wanted || gdb->chained.before ? on_before : NULL;
+    bool active = !gdb->paused && gdb->client >= 0;
+    bool wanted = active && (gdb->every || gdb->breakpoint_count || gdb->entry_break_count);
+    cpu->before = wanted || gdb->chained.before ? on_before : NULL;
+    cpu->on_exception = (active && gdb->inferior) || gdb->chained.on_exception ? on_exception : NULL;
+}
+
+static void watch_modules(gdb_t *gdb) {
+    uint32_t head, entry;
+    if (!ce_first_module(&gdb->ce, &head)) return;
+    if (head != gdb->module_head) {
+        gdb->module_head = head;
+        gdb->new_module = head;
+    }
+    if (!gdb->new_module || !ce_module_entry(&gdb->ce, gdb->new_module, &entry)) return;
+    if (gdb->entry_break_count == BREAKPOINT_MAX) memmove(gdb->entry_breaks, gdb->entry_breaks + 1, sizeof gdb->entry_breaks - sizeof gdb->entry_breaks[0]);
+    else gdb->entry_break_count++;
+    gdb->entry_breaks[gdb->entry_break_count - 1] = entry;
+    gdb->new_module = 0;
+    update_debug(gdb);
 }
 
 static void pause_debug(gdb_t *gdb, bool paused) {
@@ -333,6 +358,14 @@ static bool check_before(gdb_t *gdb, uint32_t pc) {
         gdb->resume_skip = false;
         update_debug(gdb);
         if (!gdb->stepping) return false;
+    }
+    for (int i = 0; i < gdb->entry_break_count; i++) {
+        if (!address_matches(gdb, gdb->entry_breaks[i], pc, process)) continue;
+        gdb->entry_breaks[i] = gdb->entry_breaks[--gdb->entry_break_count];
+        update_debug(gdb);
+        if (current_library_hash(gdb) == gdb->library_hash) break;
+        gdb->stop_kind = STOP_LIBRARY;
+        return true;
     }
     if (gdb->waiting_for_process && user && process != gdb->last_user_process) {
         gdb->last_user_process = process;
@@ -378,7 +411,8 @@ static bool on_before(void *context, uint32_t pc) {
 
 static void on_exception(void *context, uint32_t vector, uint32_t pc) {
     gdb_t *gdb = context;
-    gdb->chained.on_exception(gdb->chained.context, vector, pc);
+    if (gdb->chained.on_exception) gdb->chained.on_exception(gdb->chained.context, vector, pc);
+    if (!gdb->paused && gdb->client >= 0 && gdb->inferior && !gdb->halted) watch_modules(gdb);
 }
 
 static void on_undefined(void *context, uint32_t pc, uint32_t op) {
@@ -395,7 +429,6 @@ static void install_hooks(gdb_t *gdb) {
     arm_cpu_t *cpu = machine_cpu(gdb);
     gdb->chained = (chained_hooks_t){ cpu->hook_context, cpu->before, cpu->on_exception, cpu->on_undefined, cpu->on_cp15 };
     cpu->hook_context = gdb;
-    cpu->on_exception = gdb->chained.on_exception ? on_exception : NULL;
     cpu->on_undefined = gdb->chained.on_undefined ? on_undefined : NULL;
     cpu->on_cp15 = gdb->chained.on_cp15 ? on_cp15 : NULL;
     update_debug(gdb);
@@ -1272,6 +1305,8 @@ static bool next_packet(gdb_t *gdb, char *packet, bool *interrupt) {
 
 static void detach_debugger(gdb_t *gdb) {
     gdb->breakpoint_count = 0;
+    gdb->entry_break_count = 0;
+    gdb->new_module = 0;
     gdb->halted = false;
     gdb->stepping = false;
     gdb->resume_skip = false;
@@ -1302,6 +1337,8 @@ static bool accept_client(gdb_t *gdb, bool wait) {
     gdb->stop_kind = STOP_SIGNAL;
     gdb->stop_signal = SIGNAL_TRAP;
     gdb->halted = true;
+    gdb->new_module = 0;
+    if (!ce_first_module(&gdb->ce, &gdb->module_head)) gdb->module_head = 0;
     update_debug(gdb);
     logf_gdb(gdb, "gdb: client connected\n");
     return true;
@@ -1418,6 +1455,7 @@ void gdb_after_run(gdb_t *gdb) {
         if (gdb->client >= 0 && gdb->inferior) halt(gdb);
         return;
     }
+    if (gdb->client >= 0 && !gdb->halted && gdb->inferior) watch_modules(gdb);
     if (gdb->client >= 0 && !gdb->halted && gdb->inferior) check_libraries(gdb);
     if (gdb->client >= 0 && !gdb->halted && gdb->run_active) check_run_exit(gdb);
 }
