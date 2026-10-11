@@ -33,6 +33,8 @@ typedef struct {
 } sa1110_dma_t;
 
 #define SA1110_RCSR_SWR (1u << 1)
+#define SA1110_RCSR_SMR (1u << 3)
+#define SA1110_PSSR_SSS (1u << 0)
 
 typedef struct {
     uint64_t tx_next;

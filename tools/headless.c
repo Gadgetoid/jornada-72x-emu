@@ -478,7 +478,7 @@ static void run(headless_t *headless) {
     uint64_t total = headless->start_cycles + (uint64_t)(options->seconds * MACHINE_CPU_HZ);
     uint64_t slice = MACHINE_CPU_HZ / 100;
     double wall_start = wall_seconds();
-    while (machine->cpu.cycles < total && !machine->powered_off && !headless->stopped && !stop_requested) {
+    while (machine->cpu.cycles < total && !headless->stopped && !stop_requested) {
         double now = (double)(machine->cpu.cycles - headless->start_cycles) / MACHINE_CPU_HZ;
         if (options->stats_every > 0 && now >= headless->next_stats) {
             print_stats(headless, now);

@@ -149,7 +149,21 @@ static uint16_t soc_ssp_exchange(void *context, uint16_t value) {
     return reply;
 }
 
+static void wake(machine_t *machine) {
+    sa1110_t *soc = &machine->soc;
+    uint32_t pspr = soc->pspr, pwer = soc->pwer, pgsr = soc->pgsr, rtar = soc->rtar, rttr = soc->rttr;
+    machine_reset(machine);
+    soc->pspr = pspr;
+    soc->pwer = pwer;
+    soc->pgsr = pgsr;
+    soc->rtar = rtar;
+    soc->rttr = rttr;
+    soc->rcsr = SA1110_RCSR_SMR;
+    soc->pssr = SA1110_PSSR_SSS;
+}
+
 void machine_key(machine_t *machine, uint8_t scancode, bool down) {
+    if (machine->powered_off && down && scancode == MACHINE_POWER_KEY && (machine->soc.pwer & 1u)) wake(machine);
     mcu_key(&machine->mcu, scancode, down);
     update_mcu_lines(machine);
 }
@@ -427,6 +441,11 @@ void machine_run(machine_t *machine, uint64_t cycles) {
     arm_cpu_t *cpu = &machine->cpu;
     uint64_t end = cpu->cycles + cycles;
     cpu->stopped = false;
+    if (machine->powered_off) {
+        cpu->cycles = end;
+        sa1110_advance(&machine->soc, cpu->cycles);
+        return;
+    }
     while (cpu->cycles < end && !machine->powered_off && !cpu->stopped) {
         sa1110_advance(&machine->soc, cpu->cycles);
         sa1111_advance(&machine->sa1111, cpu->cycles);

@@ -21,6 +21,7 @@
 #define MACHINE_SERIAL_QUEUE 8192
 #define MACHINE_SERIAL_PORT  3
 #define MACHINE_GPIO_SERIAL_DETECT 15
+#define MACHINE_POWER_KEY 0x7F
 
 typedef struct {
     uint32_t pa;

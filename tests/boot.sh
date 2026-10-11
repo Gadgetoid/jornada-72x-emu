@@ -84,6 +84,15 @@ debugmgr_check() {
     check "debugmgr starts after a soft reset" "$restarted" ok
 }
 
+power_check() {
+    word="--tap=1:514:35:0.1 --tap=1.5:514:35:0.1"
+    ./headless --load=$out/desktop.state $word --key=10:0x7f --seconds=12 > "$out/sleep.log"
+    ./headless --load=$out/desktop.state $word --key=10:0x7f --key=13:0x7f --seconds=16 --screenshot=$out/wake.png > /dev/null
+    ./headless --load=$out/desktop.state $word --seconds=16 --screenshot=$out/awake.png > /dev/null
+    if grep -q "powered off" "$out/sleep.log"; then echo "ok   On/Off key suspends"; else echo "FAIL On/Off key suspends"; failed=1; fi
+    check "On/Off key resumes Pocket Word" "$(shasum < $out/wake.png)" "$(shasum < $out/awake.png)"
+}
+
 gdb_check() {
     port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     ./headless --load=$out/desktop.state --gdb=$port > "$out/gdb.log" 2>&1 &
@@ -104,6 +113,7 @@ gdb_check() {
 run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
+power_check
 debugmgr_check
 app_check
 gdb_check
