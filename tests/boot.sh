@@ -61,6 +61,28 @@ app_check() {
     rm -rf "$data" "$agent"
 }
 
+app_profile_check() {
+    data=/tmp/jornada-profile-$$
+    rm -rf "$data"
+    mkdir -p "$data/jornada-72x-emu"
+    cp "$out/desktop.state" "$data/jornada-72x-emu/state.bin"
+    tcp=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    HOME="$data" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$data" SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
+        ./jornada720 --tcp=$tcp > "$out/app-profile.log" 2>&1 &
+    app=$!
+    connected=fail
+    for attempt in $(seq 1 40); do
+        python3 -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1).close()' $tcp 2>/dev/null && connected=ok && break
+        sleep 0.5
+    done
+    check "app offers the serial port on TCP" "$connected" ok
+    kill -TERM $app
+    wait $app || true
+    check "app makes its first machine from the old state" "$(sed -n 's/^state=//p' "$data/jornada-72x-emu/machines/jornada-720.ini")" "$data/jornada-72x-emu/state.bin"
+    check_different "app saves the first machine's state" "$(shasum < "$out/desktop.state")" "$(shasum < "$data/jornada-72x-emu/state.bin")"
+    rm -rf "$data"
+}
+
 debugmgr_check() {
     socket=/tmp/jornada-rapi-$$.sock
     agent=/tmp/jornada-agent-$$.sock
@@ -131,6 +153,7 @@ type_check
 speed_check
 debugmgr_check
 app_check
+app_profile_check
 gdb_check
 
 check_different "host clock sets the date at a cold boot" "$(shasum < $out/host-clock.png)" "$(shasum < $out/calibrated.png)"

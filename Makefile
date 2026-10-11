@@ -1,5 +1,5 @@
+PROG     = jornada720
 HEADLESS = headless
-APP      = jornada720
 ARMSTEP  = $(BUILD)/arm-step
 RAPI_TOOL = jornada-rapi
 JORNADA_TOOLS ?= ../jornada-72x-tools
@@ -8,14 +8,34 @@ BUILD    = build
 PYTHON  ?= python3
 UNCRUSTIFY ?= uncrustify
 
-CFLAGS += -Isrc -I$(BUILD) -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
+.DEFAULT_GOAL := all
 
-SRC_APP = src/app/desktop.c src/app/serial_service.c src/app/input.c src/app/launch.c src/app/notices.c src/app/paths.c src/app/view.c src/app/main.c
-
-SRC_MACHINE = src/core/agent.c src/core/arm.c src/core/ce.c src/core/gdb.c src/core/mailbox.c src/core/optimiser.c src/native/native.c src/core/sa1110.c src/core/sa1111.c src/core/sed1356.c src/core/eeprom.c src/core/mcu.c src/core/key_text.c src/core/machine.c src/core/state.c src/util/png.c
-
-C_STYLE_SOURCES = $(filter-out src/vendor/%,$(shell git ls-files 'src/**/*.c' 'src/**/*.h' 'tools/*.c'))
 PKG_CONFIG ?= pkg-config
+
+CFLAGS += -Isrc -I$(BUILD) -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
+ifeq ($(SDL_STATIC),1)
+SDL_PKG_CONFIG = $(PKG_CONFIG) --static
+else
+SDL_PKG_CONFIG = $(PKG_CONFIG)
+endif
+
+SDL_CFLAGS  = $(shell $(SDL_PKG_CONFIG) --cflags sdl3)
+THREAD_LIBS = -lpthread
+LDFLAGS    += $(shell $(SDL_PKG_CONFIG) --libs sdl3) -lm -lz $(THREAD_LIBS)
+
+UNAME := $(shell uname -s)
+ifeq ($(UNAME),Darwin)
+MENU     ?= macos
+else
+MENU     ?= bar
+CFLAGS   += -D_GNU_SOURCE
+endif
+ifeq ($(MENU),macos)
+SRC_MENU  = src/frontend/macos/menu.m src/frontend/macos/dialog.m
+LDFLAGS  += -framework Cocoa
+else
+SRC_MENU  = src/frontend/linux/menu.c src/frontend/linux/dialog.c src/frontend/linux/ui.c src/frontend/common/menu_state.c src/vendor/truetype.c
+endif
 
 ifeq ($(shell $(PKG_CONFIG) --exists slirp && echo yes),yes)
 SRC_NET  = src/util/socket_path.c src/net/net_gateway.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/serial_link.c
@@ -32,23 +52,25 @@ else
 SRC_NET  = src/util/socket_path.c src/net/net_gateway_none.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/web_proxy_none.c src/net/serial_link.c
 endif
 
-SRC_RAPI = src/rapi/rapi.c src/rapi/rapi_load.c src/rapi/rapi_setup.c src/rapi/rapi_sync.c src/rapi/debugmgr_image.c
+SRC_MACHINE = src/core/agent.c src/core/arm.c src/core/ce.c src/core/gdb.c src/core/mailbox.c src/core/optimiser.c src/native/native.c src/core/sa1110.c src/core/sa1111.c src/core/sed1356.c src/core/eeprom.c src/core/mcu.c src/core/key_text.c src/core/machine.c src/core/state.c src/util/png.c
+SRC_RAPI    = src/rapi/rapi.c src/rapi/rapi_load.c src/rapi/rapi_setup.c src/rapi/rapi_sync.c src/rapi/debugmgr_image.c
+SRC_APP     = $(SRC_MACHINE) $(SRC_NET) $(SRC_RAPI) src/core/screen.c src/util/options.c src/util/file.c src/app/capture.c src/app/commands.c src/app/desktop.c src/app/host.c src/app/input.c src/app/launch.c src/app/library.c src/app/log.c src/app/machine_session.c src/app/notices.c src/app/paths.c src/app/picks.c src/app/profiles.c src/app/rom_catalog.c src/app/runner.c src/app/serial_service.c src/app/settings.c src/app/snapshot_store.c src/app/typer.c src/app/view.c src/app/main.c src/frontend/common/dialog.c src/frontend/common/menu_queue.c $(SRC_MENU)
 
-.DEFAULT_GOAL := all
+OBJ_APP      = $(patsubst %.m,$(BUILD)/%.o,$(SRC_APP:%.c=$(BUILD)/%.o))
+OBJ_HEADLESS = $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(BUILD)/tools/headless.o
 
-SDL_CFLAGS = $(shell pkg-config --cflags sdl3)
-SDL_LIBS   = $(shell pkg-config --libs sdl3)
+C_STYLE_SOURCES = $(filter-out src/vendor/%,$(shell git ls-files 'src/**/*.c' 'src/**/*.h' 'tools/*.c'))
 
-all: $(HEADLESS) $(ARMSTEP) $(APP) $(RAPI_TOOL)
+all: $(HEADLESS) $(ARMSTEP) $(PROG) $(RAPI_TOOL)
 
-$(APP): $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(SRC_RAPI:%.c=$(BUILD)/%.o) $(SRC_APP:%.c=$(BUILD)/%.o)
-	$(CC) -o $@ $^ -lm -lz -lpthread $(NET_LIBS) $(SDL_LIBS)
+$(PROG): $(OBJ_APP)
+	$(CC) -o $@ $^ $(LDFLAGS) $(NET_LIBS)
 
-$(BUILD)/src/app/%.o: CFLAGS += $(SDL_CFLAGS)
+$(BUILD)/src/app/%.o $(BUILD)/src/frontend/%.o: CFLAGS += $(SDL_CFLAGS)
 $(BUILD)/src/vendor/%.o: CFLAGS += -w
 
-$(HEADLESS): $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(BUILD)/tools/headless.o
-	$(CC) -o $@ $^ -lm -lz $(NET_LIBS)
+$(HEADLESS): $(OBJ_HEADLESS)
+	$(CC) -o $@ $^ -lm -lz $(THREAD_LIBS) $(NET_LIBS)
 
 $(RAPI_TOOL): $(SRC_RAPI:%.c=$(BUILD)/%.o) $(BUILD)/src/util/options.o $(BUILD)/tools/jornada_rapi.o
 	$(CC) -o $@ $^
@@ -80,7 +102,11 @@ $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: $(APP) $(HEADLESS) $(NATIVECHECK)
+$(BUILD)/%.o: %.m
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -std=c11,$(CFLAGS)) $(SDL_CFLAGS) -fobjc-arc -c -o $@ $<
+
+test: $(PROG) $(HEADLESS) $(NATIVECHECK)
 	./$(NATIVECHECK)
 	tests/boot.sh
 
@@ -94,7 +120,7 @@ format-check:
 	$(UNCRUSTIFY) -c .uncrustify.cfg --check $(C_STYLE_SOURCES)
 
 clean:
-	rm -rf $(BUILD) $(HEADLESS) $(APP) $(RAPI_TOOL)
+	rm -rf $(BUILD) $(HEADLESS) $(PROG) $(RAPI_TOOL)
 
 .PHONY: all clean debugmgr difftest format format-check native-check test FORCE
 

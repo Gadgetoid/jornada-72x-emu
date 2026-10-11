@@ -2,13 +2,16 @@
 
 #include <stdbool.h>
 
-#define LAUNCH_TCP_PORT 9991
+#include "app/settings.h"
+#include "util/options.h"
 
 typedef struct {
-    const char *rom, *eeprom, *state_file, *agent_socket, *gdb_process;
+    settings_t   *settings;
+    const char   *rom, *eeprom, *state_file, *machine;
+    bool fresh, verbose;
     int gdb_port;
-    bool fresh, optimisations, network;
-    int tcp_port;
+    const char   *gdb_process;
+    const char   *agent_socket;
 } launch_t;
 
-void launch_parse(launch_t *launch, int argc, char **argv);
+options_result_t launch_parse(launch_t *launch, settings_t *settings, int argc, char **argv);

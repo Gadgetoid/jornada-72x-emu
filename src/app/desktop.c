@@ -2,6 +2,7 @@
 #include "rapi/debugmgr_image.h"
 #include "rapi/rapi.h"
 #include "rapi/rapi_load.h"
+#include "rapi/rapi_project.h"
 #include "rapi/rapi_setup.h"
 #include "rapi/rapi_sync.h"
 
@@ -146,7 +147,7 @@ static void run_sync(desktop_t *desktop, rapi_t *rapi) {
 
 static void run_load(desktop_t *desktop, rapi_t *rapi) {
     if (rapi_load_run(rapi, desktop->folder, NULL, sync_message, desktop)) set_status(desktop, "installed %s", leaf_of(desktop->folder));
-    else set_status(desktop, "%s didn't install cleanly, see sh3emu-rapi load for details", leaf_of(desktop->folder));
+    else set_status(desktop, "%s didn't install cleanly, see " RAPI_TOOL " load for details", leaf_of(desktop->folder));
 }
 
 static void run_proxy(desktop_t *desktop, rapi_t *rapi) {
