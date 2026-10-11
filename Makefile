@@ -1,12 +1,14 @@
 HEADLESS = headless
 APP      = jornada720
 ARMSTEP  = $(BUILD)/arm-step
+RAPI_TOOL = jornada-rapi
+JORNADA_TOOLS ?= ../jornada-72x-tools
 NATIVECHECK = $(BUILD)/native-check
 BUILD    = build
 PYTHON  ?= python3
 UNCRUSTIFY ?= uncrustify
 
-CFLAGS += -Isrc -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
+CFLAGS += -Isrc -I$(BUILD) -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
 
 SRC_APP = src/app/input.c src/app/launch.c src/app/notices.c src/app/paths.c src/app/view.c src/app/main.c
 
@@ -30,14 +32,14 @@ else
 SRC_NET  = src/net/net_gateway_none.c src/net/ppp_gateway.c src/net/ethernet_gateway.c src/net/web_proxy_none.c src/net/serial_link.c
 endif
 
-SRC_RAPI = src/rapi/rapi.c src/rapi/rapi_load.c src/rapi/rapi_setup.c src/rapi/rapi_sync.c
+SRC_RAPI = src/rapi/rapi.c src/rapi/rapi_load.c src/rapi/rapi_setup.c src/rapi/rapi_sync.c src/rapi/debugmgr_image.c
 
 .DEFAULT_GOAL := all
 
 SDL_CFLAGS = $(shell pkg-config --cflags sdl3)
 SDL_LIBS   = $(shell pkg-config --libs sdl3)
 
-all: $(HEADLESS) $(ARMSTEP) $(APP)
+all: $(HEADLESS) $(ARMSTEP) $(APP) $(RAPI_TOOL)
 
 $(APP): $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(SRC_RAPI:%.c=$(BUILD)/%.o) $(SRC_APP:%.c=$(BUILD)/%.o)
 	$(CC) -o $@ $^ -lm -lz $(NET_LIBS) $(SDL_LIBS)
@@ -47,6 +49,23 @@ $(BUILD)/src/vendor/%.o: CFLAGS += -w
 
 $(HEADLESS): $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(BUILD)/tools/headless.o
 	$(CC) -o $@ $^ -lm -lz $(NET_LIBS)
+
+$(RAPI_TOOL): $(SRC_RAPI:%.c=$(BUILD)/%.o) $(BUILD)/src/util/options.o $(BUILD)/tools/jornada_rapi.o
+	$(CC) -o $@ $^
+
+VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+
+$(BUILD)/version.h: FORCE
+	@mkdir -p $(BUILD)
+	@printf '#define JORNADA_VERSION "%s"\n' "$(VERSION)" > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+
+$(BUILD)/src/util/options.o: $(BUILD)/version.h
+
+debugmgr:
+	$(MAKE) -C $(JORNADA_TOOLS) debugmgr
+	$(PYTHON) tools/mkdebugmgr.py $(JORNADA_TOOLS)/build/debugmgr/debugmgr.exe src/rapi/debugmgr_image.c
 
 $(ARMSTEP): $(BUILD)/src/core/arm.o $(BUILD)/tools/arm_step.o
 	$(CC) -o $@ $^ -lz
@@ -75,8 +94,8 @@ format-check:
 	$(UNCRUSTIFY) -c .uncrustify.cfg --check $(C_STYLE_SOURCES)
 
 clean:
-	rm -rf $(BUILD) $(HEADLESS) $(APP)
+	rm -rf $(BUILD) $(HEADLESS) $(APP) $(RAPI_TOOL)
 
-.PHONY: all clean difftest format format-check native-check test
+.PHONY: all clean debugmgr difftest format format-check native-check test FORCE
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)

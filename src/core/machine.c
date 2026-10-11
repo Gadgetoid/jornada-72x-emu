@@ -317,7 +317,8 @@ static void power_off(void *context) {
 
 static bool mailbox_copy(void *context, uint32_t va, uint8_t *data, uint32_t length, bool write) {
     machine_t *machine = context;
-    uint8_t *host = arm_map_virtual(&machine->cpu, va, write, true);
+    bool user = (machine->cpu.cpsr & ARM_PSR_MODE) == ARM_MODE_USR;
+    uint8_t *host = arm_map_virtual(&machine->cpu, va, write, user);
     if (!host) return false;
     if (write) memcpy(host, data, length);
     else memcpy(data, host, length);
@@ -327,7 +328,8 @@ static bool mailbox_copy(void *context, uint32_t va, uint8_t *data, uint32_t len
 static bool on_swi(void *context, uint32_t comment) {
     machine_t *machine = context;
     arm_cpu_t *cpu = &machine->cpu;
-    if (comment != MAILBOX_SWI_COMMENT || (cpu->cpsr & ARM_PSR_MODE) != ARM_MODE_USR) return false;
+    uint32_t mode = cpu->cpsr & ARM_PSR_MODE;
+    if (comment != MAILBOX_SWI_COMMENT || (mode != ARM_MODE_USR && mode != ARM_MODE_SYS)) return false;
     if (cpu->r[0] == MAILBOX_RECV) machine->mailbox_received_at = cpu->cycles;
     uint32_t fault_va;
     if (mailbox_trap(&machine->mailbox, cpu, mailbox_copy, machine, &fault_va)) {

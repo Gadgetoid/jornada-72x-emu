@@ -4,6 +4,7 @@
 #include "net/serial_link.h"
 #include "util/png.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +84,13 @@ typedef struct {
     uint32_t wav_rate;
     int16_t audio_frames[MACHINE_AUDIO_FRAMES * 2];
 } headless_t;
+
+static volatile sig_atomic_t stop_requested;
+
+static void request_stop(int signal_number) {
+    (void)signal_number;
+    stop_requested = 1;
+}
 
 static void add_input(headless_t *headless, input_event_t event) {
     if (headless->input_count < INPUT_MAX) headless->inputs[headless->input_count++] = event;
@@ -433,7 +441,7 @@ static void run(headless_t *headless) {
     uint64_t total = headless->start_cycles + (uint64_t)(options->seconds * MACHINE_CPU_HZ);
     uint64_t slice = MACHINE_CPU_HZ / 100;
     double wall_start = wall_seconds();
-    while (machine->cpu.cycles < total && !machine->powered_off && !headless->stopped) {
+    while (machine->cpu.cycles < total && !machine->powered_off && !headless->stopped && !stop_requested) {
         double now = (double)(machine->cpu.cycles - headless->start_cycles) / MACHINE_CPU_HZ;
         if (options->stats_every > 0 && now >= headless->next_stats) {
             print_stats(headless, now);
@@ -500,6 +508,8 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (!start_machine(headless)) return 1;
+    signal(SIGINT, request_stop);
+    signal(SIGTERM, request_stop);
     const options_t *options = &headless->options;
     clock_t started = clock();
     run(headless);
