@@ -30,6 +30,21 @@ static const uint32_t cache_sweep_code[CACHE_SWEEP_WORDS] = {
     0xE2800601u, 0xE3A01020u, 0xE4902020u, 0xE2511001u, 0x1AFFFFFCu, 0xE1A0F00Eu,
 };
 
+#define TICK_SPIN_WORDS 3u
+#define TICK_SPIN_COUNT 2u
+
+static const uint32_t tick_spin_compare[TICK_SPIN_COUNT] = { 0x000309F8u, 0x00030A4Cu };
+
+static const uint32_t tick_spin_code[TICK_SPIN_COUNT][TICK_SPIN_WORDS] = {
+    { 0xEB018984u, 0xE1500009u, 0x3AFFFFFCu },
+    { 0xEB01896Fu, 0xE1500009u, 0x3AFFFFFCu },
+};
+
+static void filter_add(optimiser_t *optimiser, uint32_t address) {
+    uint32_t bit = (address >> 2) & (OPTIMISER_FILTER_BITS - 1);
+    optimiser->filter[bit >> 3] |= 1u << (bit & 7);
+}
+
 static bool read_code(arm_cpu_t *cpu, uint32_t pc, uint32_t *code, uint32_t words) {
     for (uint32_t i = 0; i < words; i++)
         if (!arm_read_instruction_virtual(cpu, pc + i * 4, &code[i])) return false;
@@ -42,8 +57,24 @@ static uint8_t *native_map(void *context, uint32_t va, bool write) {
     return arm_map_virtual(cpu, va, write, user);
 }
 
+static bool skip_tick_spin(optimiser_t *optimiser, arm_cpu_t *cpu, uint32_t pc) {
+    for (uint32_t i = 0; i < TICK_SPIN_COUNT; i++) {
+        if (pc != tick_spin_compare[i]) continue;
+        uint32_t code[TICK_SPIN_WORDS];
+        if (!read_code(cpu, pc - 4, code, TICK_SPIN_WORDS) || memcmp(code, tick_spin_code[i], sizeof code)) return false;
+        if (cpu->r[0] >= cpu->r[9] || optimiser->poll_deadline <= cpu->cycles) return false;
+        cpu->cycles = optimiser->poll_deadline;
+        cpu->r[15] = pc - 4;
+        optimiser->tick_spin_skips++;
+        return true;
+    }
+    return false;
+}
+
 static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
     optimiser_t *optimiser = context;
+    if (skip_tick_spin(optimiser, cpu, pc)) return true;
+    if (!optimiser->enabled) return false;
     if (pc == CACHE_SWEEP_ADDRESS) {
         optimiser->cache_sweep_entries++;
         if (!optimiser->cache_sweep_checked) {
@@ -103,17 +134,16 @@ static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
 void optimiser_init(optimiser_t *optimiser, arm_cpu_t *cpu) {
     memset(optimiser, 0, sizeof *optimiser);
     optimiser->cpu = cpu;
-    uint32_t bit = (MEMMOVE_ADDRESS >> 2) & (OPTIMISER_FILTER_BITS - 1);
-    optimiser->filter[bit >> 3] |= 1u << (bit & 7);
-    bit = (CACHE_SWEEP_ADDRESS >> 2) & (OPTIMISER_FILTER_BITS - 1);
-    optimiser->filter[bit >> 3] |= 1u << (bit & 7);
+    filter_add(optimiser, MEMMOVE_ADDRESS);
+    filter_add(optimiser, CACHE_SWEEP_ADDRESS);
+    for (uint32_t i = 0; i < TICK_SPIN_COUNT; i++) filter_add(optimiser, tick_spin_compare[i]);
+    cpu->optimiser_filter = optimiser->filter;
     cpu->optimiser_context = optimiser;
     cpu->on_optimiser = optimiser_run;
 }
 
 void optimiser_set_enabled(optimiser_t *optimiser, bool enabled) {
     optimiser->enabled = enabled;
-    optimiser->cpu->optimiser_filter = enabled ? optimiser->filter : NULL;
 }
 
 void optimiser_set_deadline(optimiser_t *optimiser, uint64_t deadline) {
@@ -169,4 +199,5 @@ void optimiser_print(const optimiser_t *optimiser, FILE *out) {
             (unsigned long long)optimiser->cache_sweep_instructions_skipped,
             (unsigned long long)optimiser->memmove_guest_cycles_charged,
             (unsigned long long)optimiser->poll_cycles_advanced);
+    fprintf(out, "GetTickCount spin: skips %llu\n", (unsigned long long)optimiser->tick_spin_skips);
 }

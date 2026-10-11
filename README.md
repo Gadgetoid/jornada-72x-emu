@@ -90,6 +90,8 @@ The first run asks for the ROM and EEPROM, from the phone's storage or Downloads
 
 ## Optimisations
 
+gwes animates window minimise and restore by spinning on `GetTickCount` for 26 ms per step, which needs the full 206 MHz. Those two loops are fingerprinted and skip to the next timer interrupt while the tick count hasn't reached its target, so the animation keeps its real speed on a slower host. Only CPU time is skipped, so this is on whether or not optimisations are.
+
 Native optimisations are off by default. Pass `--optimisations` to `headless` or `jornada720` to enable them.
 
 The `nk.exe` delay routine at `0x0004F06C` is recognized by its 12-word ARM instruction fingerprint. It advances through the OSCR busy wait to the first counter value that makes the routine's own comparison succeed, without crossing the machine scheduler's next event. At return, registers, flags, PC and guest time match the interpreted path. Headless reports poll skips and guest cycles advanced.

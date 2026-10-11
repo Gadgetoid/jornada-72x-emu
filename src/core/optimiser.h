@@ -31,6 +31,7 @@ typedef struct {
     uint64_t poll_skips;
     uint64_t poll_cycles_advanced;
     uint8_t filter[OPTIMISER_FILTER_BITS / 8];
+    uint64_t tick_spin_skips;
 } optimiser_t;
 
 void optimiser_init(optimiser_t *optimiser, arm_cpu_t *cpu);
