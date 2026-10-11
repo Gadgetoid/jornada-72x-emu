@@ -315,3 +315,19 @@ void machine_run(machine_t *machine, uint64_t cycles) {
 double machine_seconds(const machine_t *machine) {
     return (double)machine->cpu.cycles / MACHINE_CPU_HZ;
 }
+
+void machine_print_status(const machine_t *machine, FILE *out) {
+    const arm_cpu_t *cpu = &machine->cpu;
+    const sa1110_t *soc = &machine->soc;
+    fprintf(out, "t %.3fs instructions %llu%s\n", machine_seconds(machine), (unsigned long long)cpu->instructions,
+            cpu->waiting ? " waiting" : "");
+    fprintf(out, "pc %08x cpsr %08x control %08x ttb %08x dacr %08x pid %08x fsr %03x far %08x\n", cpu->r[15], cpu->cpsr,
+            cpu->control, cpu->ttb, cpu->dacr, cpu->pid, cpu->fsr, cpu->far);
+    fprintf(out, "gpio level %08x dir %08x rise %08x fall %08x edge %08x alt %08x  ic mask %08x level %08x pending %08x  irq %d fiq %d\n",
+            (soc->gplr_out & soc->gpdr) | (soc->gpio_input & ~soc->gpdr), soc->gpdr, soc->grer, soc->gfer, soc->gedr, soc->gafr,
+            soc->icmr, soc->iclr, soc->icpr, cpu->irq_line, cpu->fiq_line);
+    fprintf(out, "ostimer oscr %08x osmr0 %08x oier %x ossr %x\n", sa1110_oscr(soc, cpu->cycles), soc->osmr[0], soc->oier, soc->ossr);
+    for (int i = 0; i < 16; i++) fprintf(out, "r%-2d %08x%s", i, cpu->r[i], i % 4 == 3 ? "\n" : "  ");
+    fprintf(out, "mcu selected %d keys %d pen %d\n", machine->mcu.selected, machine->mcu.key_count, machine->mcu.pen_down);
+    if (machine->optimiser.enabled) optimiser_print(&machine->optimiser, out);
+}

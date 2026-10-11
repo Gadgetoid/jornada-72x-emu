@@ -42,17 +42,6 @@ typedef struct {
     double next_autosave;
 } app_t;
 
-static void print_status(machine_t *machine) {
-    arm_cpu_t *cpu = &machine->cpu;
-    sa1110_t *soc = &machine->soc;
-    fprintf(stderr, "t %.1fs pc %08x cpsr %08x pid %08x %s instructions %llu\n", machine_seconds(machine), cpu->r[15],
-            cpu->cpsr, cpu->pid, cpu->waiting ? "waiting" : "running", (unsigned long long)cpu->instructions);
-    fprintf(stderr, "  oscr %08x osmr0 %08x oier %x ossr %x icmr %08x iclr %08x gedr %08x gpio %08x irq %d fiq %d\n",
-            sa1110_oscr(soc, cpu->cycles), soc->osmr[0], soc->oier, soc->ossr, soc->icmr, soc->iclr, soc->gedr,
-            (soc->gplr_out & soc->gpdr) | (soc->gpio_input & ~soc->gpdr), cpu->irq_line, cpu->fiq_line);
-    fprintf(stderr, "  mcu selected %d keys %d pen %d\n", machine->mcu.selected, machine->mcu.key_count, machine->mcu.pen_down);
-}
-
 static bool handle_command(app_t *app, SDL_Scancode scancode) {
     machine_t *machine = &app->machine;
     switch (scancode) {
@@ -70,7 +59,7 @@ static bool handle_command(app_t *app, SDL_Scancode scancode) {
         notice_show(&app->notice, state_describe(state_load(machine, app->state_path, (uint64_t)time(NULL))), NOTICE_SHORT);
         return true;
     case SDL_SCANCODE_D:
-        print_status(machine);
+        machine_print_status(machine, stderr);
         return true;
     case SDL_SCANCODE_M:
         app->muted = !app->muted;

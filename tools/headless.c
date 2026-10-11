@@ -284,28 +284,13 @@ int main(int argc, char **argv) {
     printf("emulated %.3fs in %.3fs, %llu instructions (%.1f M/s)%s%s\n", machine_seconds(&machine), host,
            (unsigned long long)cpu->instructions, host > 0 ? cpu->instructions / host / 1e6 : 0,
            session.stopped ? ", stopped" : "", machine.powered_off ? ", powered off" : "");
-    printf("pc %08x cpsr %08x control %08x ttb %08x dacr %08x pid %08x fsr %03x far %08x%s\n", cpu->r[15], cpu->cpsr,
-           cpu->control, cpu->ttb, cpu->dacr, cpu->pid, cpu->fsr, cpu->far, cpu->waiting ? " waiting" : "");
-    sa1110_t *soc = &machine.soc;
-    printf("gpio level %08x dir %08x rise %08x fall %08x edge %08x alt %08x  ic mask %08x level %08x pending %08x\n",
-           (soc->gplr_out & soc->gpdr) | (soc->gpio_input & ~soc->gpdr), soc->gpdr, soc->grer, soc->gfer, soc->gedr, soc->gafr,
-           soc->icmr, soc->iclr, soc->icpr);
-    for (int i = 0; i < 16; i++) printf("r%-2d %08x%s", i, cpu->r[i], i % 4 == 3 ? "\n" : "  ");
+    machine_print_status(&machine, stdout);
     static const char *names[8] = { "reset", "undefined", "swi", "prefetch", "data", "reserved", "irq", "fiq" };
     printf("exceptions:");
     for (int i = 0; i < 8; i++)
         if (session.exception_counts[i]) printf(" %s %llu", names[i], (unsigned long long)session.exception_counts[i]);
     printf("\n");
     printf("unknown accesses: %d\n", machine.unknown_count);
-    if (optimisations)
-        printf("native memmove: entries %llu, fingerprint %s, fallbacks %llu, hits %llu\n",
-               (unsigned long long)machine.optimiser.memmove_entries,
-               machine.optimiser.memmove_checked ? (machine.optimiser.memmove_matched ? "matched" : "mismatched") : "unchecked",
-               (unsigned long long)machine.optimiser.memmove_fallbacks, (unsigned long long)machine.optimiser.memmove_hits);
-    if (optimisations)
-        printf("native OSCR delay: fingerprint %s, poll skips %llu\n",
-               machine.optimiser.poll_checked ? (machine.optimiser.poll_matched ? "matched" : "mismatched") : "unchecked",
-               (unsigned long long)machine.optimiser.poll_skips);
     for (int i = 0; i < machine.unknown_count; i++) {
         machine_unknown_t *entry = &machine.unknown[i];
         printf("  %s %08x size %d count %u last %08x pc %08x\n", entry->write ? "write" : "read ", entry->pa, entry->size,

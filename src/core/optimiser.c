@@ -114,3 +114,13 @@ bool optimiser_poll(optimiser_t *optimiser, uint32_t pa, uint32_t pc, uint32_t v
     optimiser->poll_skips++;
     return true;
 }
+
+void optimiser_print(const optimiser_t *optimiser, FILE *out) {
+    fprintf(out, "native memmove: entries %llu, fingerprint %s, fallbacks %llu, hits %llu\n",
+            (unsigned long long)optimiser->memmove_entries,
+            optimiser->memmove_checked ? (optimiser->memmove_matched ? "matched" : "mismatched") : "unchecked",
+            (unsigned long long)optimiser->memmove_fallbacks, (unsigned long long)optimiser->memmove_hits);
+    fprintf(out, "native OSCR delay: fingerprint %s, poll skips %llu\n",
+            optimiser->poll_checked ? (optimiser->poll_matched ? "matched" : "mismatched") : "unchecked",
+            (unsigned long long)optimiser->poll_skips);
+}

@@ -63,4 +63,5 @@ void machine_key(machine_t *machine, uint8_t scancode, bool down);
 void machine_pen(machine_t *machine, bool down, uint16_t x, uint16_t y);
 void machine_touch(machine_t *machine, bool down, int x, int y);
 uint32_t machine_audio_take(machine_t *machine, int16_t *frames, uint32_t max_frames, uint32_t *rate);
+void machine_print_status(const machine_t *machine, FILE *out);
 double machine_seconds(const machine_t *machine);
