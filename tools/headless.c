@@ -55,6 +55,7 @@ typedef struct {
     bool count_pc_enabled;
     const char *agent_socket;
     double realtime;
+    double soft_reset_at;
     double net_at;
     double cable_at;
     int tcp_port;
@@ -66,6 +67,7 @@ typedef struct {
     machine_t machine;
     agent_t *agent;
     serial_link_t serial;
+    bool soft_reset_done;
     FILE *trace;
     bool stopped;
     int exceptions_shown;
@@ -212,6 +214,7 @@ static void usage(void) {
             "  --trace-from=N     start tracing after N instructions\n"
             "  --stop-at=PC       stop when PC is reached\n"
             "  --agent=SOCKET     pass messages between a guest agent's swi 0x51CE mailbox and one client on this Unix socket\n"
+            "  --soft-reset=SECONDS  soft-reset the machine, keeping DRAM\n"
             "  --realtime[=N]     pace emulated time at N times real time (default 1), for RAPI and agent clients\n"
             "  --net=SECONDS      connect COM1 to the PPP gateway and web proxy\n"
             "  --rapi=SOCKET      expose the Jornada's RAPI port on a Unix socket, for jornada-rapi --socket\n"
@@ -225,7 +228,7 @@ static void usage(void) {
 
 static bool parse_options(headless_t *headless, int argc, char **argv) {
     options_t *options = &headless->options;
-    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1, .net_at = -1, .cable_at = -1};
+    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1, .soft_reset_at = -1, .net_at = -1, .cable_at = -1};
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (!strncmp(arg, "--rom=", 6)) options->rom = arg + 6;
@@ -263,6 +266,7 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--trace=", 8)) headless->trace = fopen(arg + 8, "w");
         else if (!strncmp(arg, "--trace-from=", 13)) options->trace_from = strtoull(arg + 13, NULL, 0);
         else if (!strncmp(arg, "--agent=", 8)) options->agent_socket = arg + 8;
+        else if (!strncmp(arg, "--soft-reset=", 13)) options->soft_reset_at = atof(arg + 13);
         else if (!strcmp(arg, "--realtime")) options->realtime = 1;
         else if (!strncmp(arg, "--realtime=", 11)) options->realtime = atof(arg + 11);
         else if (!strncmp(arg, "--net=", 6)) options->net_at = atof(arg + 6);
@@ -446,6 +450,10 @@ static void run(headless_t *headless) {
         if (options->stats_every > 0 && now >= headless->next_stats) {
             print_stats(headless, now);
             headless->next_stats = now + options->stats_every;
+        }
+        if (options->soft_reset_at >= 0 && now >= options->soft_reset_at && !headless->soft_reset_done) {
+            machine_soft_reset(machine);
+            headless->soft_reset_done = true;
         }
         apply_inputs(headless, now);
         if (headless->agent) agent_poll(headless->agent, &machine->mailbox);

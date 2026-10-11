@@ -70,6 +70,7 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
 void machine_set_optimisations(machine_t *machine, bool enabled);
 void machine_free(machine_t *machine);
 void machine_reset(machine_t *machine);
+void machine_soft_reset(machine_t *machine);
 void machine_run(machine_t *machine, uint64_t cycles);
 void machine_key(machine_t *machine, uint8_t scancode, bool down);
 void machine_pen(machine_t *machine, bool down, uint16_t x, uint16_t y);

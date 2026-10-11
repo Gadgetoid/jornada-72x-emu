@@ -410,6 +410,11 @@ void machine_reset(machine_t *machine) {
     machine->mailbox_received_at = 0;
 }
 
+void machine_soft_reset(machine_t *machine) {
+    machine_reset(machine);
+    machine->soc.rcsr = SA1110_RCSR_SWR;
+}
+
 void machine_run(machine_t *machine, uint64_t cycles) {
     arm_cpu_t *cpu = &machine->cpu;
     uint64_t end = cpu->cycles + cycles;

@@ -32,6 +32,8 @@ typedef struct {
     uint32_t ddar, dcsr, dbsa, dbta, dbsb, dbtb;
 } sa1110_dma_t;
 
+#define SA1110_RCSR_SWR (1u << 1)
+
 typedef struct {
     uint64_t tx_next;
     uint64_t rx_next;

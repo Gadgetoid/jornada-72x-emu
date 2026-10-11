@@ -6,14 +6,17 @@
 #include <string.h>
 #include <time.h>
 
+#include "app/desktop.h"
 #include "app/input.h"
 #include "app/launch.h"
 #include "app/notices.h"
 #include "app/paths.h"
+#include "app/serial_service.h"
 #include "app/view.h"
 #include "core/agent.h"
 #include "core/machine.h"
 #include "core/state.h"
+#include "rapi/rapi.h"
 
 #define WINDOW_TITLE "Jornada 720"
 #define SCREEN_WIDTH  640
@@ -25,6 +28,8 @@ typedef struct {
     launch_t launch;
     machine_t machine;
     agent_t *agent;
+    serial_service_t serial;
+    desktop_t *desktop;
     char state_path[1024];
     state_result_t loaded;
     SDL_Window *window;
@@ -51,8 +56,8 @@ static bool handle_command(app_t *app, SDL_Scancode scancode) {
         app->running = false;
         return true;
     case SDL_SCANCODE_R:
-        machine_reset(machine);
-        notice_show(&app->notice, "reset", NOTICE_SHORT);
+        machine_soft_reset(machine);
+        notice_show(&app->notice, "soft reset", NOTICE_SHORT);
         return true;
     case SDL_SCANCODE_S:
         notice_show(&app->notice, state_save(machine, app->state_path, (uint64_t)time(NULL)) ? "state saved" : "cannot save state", NOTICE_SHORT);
@@ -132,6 +137,14 @@ static void step_machine(app_t *app, double elapsed) {
     pen_queue_run(&app->pen, &app->machine);
     machine_run(&app->machine, (uint64_t)(elapsed * MACHINE_CPU_HZ));
     pen_queue_run(&app->pen, &app->machine);
+    serial_service_step(&app->serial, &app->machine, &app->notice);
+}
+
+static void step_desktop(app_t *app) {
+    char message[NOTICE_TEXT_CAPACITY];
+    if (serial_service_take_desktop(&app->serial) && app->agent && !machine_agent_running(&app->machine))
+        desktop_install_debugmgr(app->desktop);
+    if (desktop_take_status(app->desktop, message, sizeof message)) notice_show(&app->notice, message, NOTICE_MEDIUM);
 }
 
 static void step_audio(app_t *app) {
@@ -154,6 +167,7 @@ static void run_frame(app_t *app) {
     if (elapsed > MAX_FRAME_SECONDS) elapsed = MAX_FRAME_SECONDS;
     step_timers(app);
     step_machine(app, elapsed);
+    step_desktop(app);
     step_audio(app);
     view_render(app->view, &app->machine.display);
 }
@@ -181,6 +195,15 @@ static bool start_machine(app_t *app) {
         fprintf(stderr, "jornada720: cannot listen on agent socket %s\n", launch->agent_socket);
         return false;
     }
+    serial_service_init(&app->serial, launch->tcp_port ? SERIAL_TCP : launch->network ? SERIAL_NETWORK : SERIAL_OFF, launch->tcp_port, log_stderr);
+    const char *failure = serial_service_start(&app->serial, &app->machine);
+    if (failure) {
+        fprintf(stderr, "jornada720: %s\n", failure);
+        return false;
+    }
+    char sync_manifest[1024];
+    rapi_data_path("sync-manifest.txt", sync_manifest, sizeof sync_manifest);
+    app->desktop = desktop_create(app->serial.rapi_socket, sync_manifest);
     return true;
 }
 
@@ -216,6 +239,8 @@ static void shut_down(app_t *app) {
     SDL_DestroyRenderer(app->renderer);
     SDL_DestroyWindow(app->window);
     SDL_Quit();
+    desktop_destroy(app->desktop);
+    serial_service_close(&app->serial);
     agent_destroy(app->agent);
     machine_free(&app->machine);
 }

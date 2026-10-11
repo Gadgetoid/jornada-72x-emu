@@ -10,7 +10,7 @@ UNCRUSTIFY ?= uncrustify
 
 CFLAGS += -Isrc -I$(BUILD) -Wall -Wextra -O2 -std=c11 -fno-common -MMD -MP
 
-SRC_APP = src/app/input.c src/app/launch.c src/app/notices.c src/app/paths.c src/app/view.c src/app/main.c
+SRC_APP = src/app/desktop.c src/app/serial_service.c src/app/input.c src/app/launch.c src/app/notices.c src/app/paths.c src/app/view.c src/app/main.c
 
 SRC_MACHINE = src/core/agent.c src/core/arm.c src/core/mailbox.c src/core/optimiser.c src/native/native.c src/core/sa1110.c src/core/sa1111.c src/core/sed1356.c src/core/eeprom.c src/core/mcu.c src/core/machine.c src/core/state.c src/util/png.c
 
@@ -42,7 +42,7 @@ SDL_LIBS   = $(shell pkg-config --libs sdl3)
 all: $(HEADLESS) $(ARMSTEP) $(APP) $(RAPI_TOOL)
 
 $(APP): $(SRC_MACHINE:%.c=$(BUILD)/%.o) $(SRC_NET:%.c=$(BUILD)/%.o) $(SRC_RAPI:%.c=$(BUILD)/%.o) $(SRC_APP:%.c=$(BUILD)/%.o)
-	$(CC) -o $@ $^ -lm -lz $(NET_LIBS) $(SDL_LIBS)
+	$(CC) -o $@ $^ -lm -lz -lpthread $(NET_LIBS) $(SDL_LIBS)
 
 $(BUILD)/src/app/%.o: CFLAGS += $(SDL_CFLAGS)
 $(BUILD)/src/vendor/%.o: CFLAGS += -w
