@@ -205,6 +205,81 @@ static bool dram_read(void *context, uint32_t pa, void *buffer, uint32_t length)
     return true;
 }
 
+#define GPIO_SERIAL_POWER 8
+#define GPIO_SERIAL_DTR   17
+
+static bool dma_read(void *context, uint32_t pa, uint8_t *value) {
+    machine_t *machine = context;
+    if (pa - DRAM_BASE >= machine->dram_size) return false;
+    *value = machine->dram[pa - DRAM_BASE];
+    return true;
+}
+
+static bool dma_write(void *context, uint32_t pa, uint8_t value) {
+    machine_t *machine = context;
+    if (pa - DRAM_BASE >= machine->dram_size) return false;
+    machine->dram[pa - DRAM_BASE] = value;
+    return true;
+}
+
+static void uart_transmit(void *context, int port, uint8_t value) {
+    machine_t *machine = context;
+    if (port != MACHINE_SERIAL_PORT || !machine->serial_connected) return;
+    if (machine->serial_tx_write - machine->serial_tx_read >= MACHINE_SERIAL_QUEUE) return;
+    machine->serial_tx[machine->serial_tx_write++ % MACHINE_SERIAL_QUEUE] = value;
+}
+
+static int uart_receive(void *context, int port) {
+    machine_t *machine = context;
+    if (port != MACHINE_SERIAL_PORT || machine->serial_rx_read == machine->serial_rx_write) return -1;
+    return machine->serial_rx[machine->serial_rx_read++ % MACHINE_SERIAL_QUEUE];
+}
+
+void machine_serial_connect(machine_t *machine, bool connected) {
+    machine->serial_connected = connected;
+    if (connected) return;
+    machine->serial_rx_read = machine->serial_rx_write;
+    machine->serial_tx_read = machine->serial_tx_write;
+}
+
+bool machine_serial_connected(const machine_t *machine) {
+    return machine->serial_connected;
+}
+
+void machine_serial_send(machine_t *machine, const uint8_t *data, size_t length) {
+    for (size_t i = 0; i < length && machine_serial_space(machine); i++)
+        machine->serial_rx[machine->serial_rx_write++ % MACHINE_SERIAL_QUEUE] = data[i];
+    sa1110_uart_wake(&machine->soc, MACHINE_SERIAL_PORT, machine->cpu.cycles);
+}
+
+size_t machine_serial_take(machine_t *machine, uint8_t *out, size_t max) {
+    size_t count = 0;
+    while (count < max && machine->serial_tx_read != machine->serial_tx_write)
+        out[count++] = machine->serial_tx[machine->serial_tx_read++ % MACHINE_SERIAL_QUEUE];
+    return count;
+}
+
+size_t machine_serial_space(const machine_t *machine) {
+    return MACHINE_SERIAL_QUEUE - (machine->serial_rx_write - machine->serial_rx_read);
+}
+
+uint32_t machine_serial_baud(const machine_t *machine) {
+    return sa1110_uart_baud(&machine->soc, MACHINE_SERIAL_PORT);
+}
+
+static bool gpio_output(const sa1110_t *soc, int pin, bool level) {
+    uint32_t bit = 1u << pin;
+    return (soc->gpdr & bit) && ((soc->gplr_out & bit) != 0) == level;
+}
+
+bool machine_serial_dtr(const machine_t *machine) {
+    return gpio_output(&machine->soc, GPIO_SERIAL_POWER, true) && gpio_output(&machine->soc, GPIO_SERIAL_DTR, false);
+}
+
+uint64_t machine_cycles(const machine_t *machine) {
+    return machine->cpu.cycles;
+}
+
 static void audio_output(void *context, const int16_t *frames, uint32_t count, uint32_t rate) {
     machine_t *machine = context;
     if (rate != machine->audio_rate) machine->audio_read = machine->audio_write;
@@ -298,7 +373,8 @@ bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_p
     machine->cpu.on_swi = on_swi;
     machine->soc.cpu_hz = MACHINE_CPU_HZ;
     machine->soc.board = (sa1110_board_t){ .context = machine, .gpio_changed = soc_gpio_changed, .ssp_exchange = soc_ssp_exchange,
-                                           .power_off = power_off };
+                                           .power_off = power_off, .dma_read = dma_read, .dma_write = dma_write,
+                                           .uart_transmit = uart_transmit, .uart_receive = uart_receive };
     machine->sa1111.board = (sa1111_board_t){
         .context = machine, .ssp_exchange = sa1111_ssp_exchange, .interrupt_changed = sa1111_interrupt_changed,
         .gpio_changed = sa1111_gpio_changed, .now = machine_now, .cpu_hz = MACHINE_CPU_HZ, .dram_read = dram_read,

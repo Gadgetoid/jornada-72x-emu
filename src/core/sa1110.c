@@ -28,8 +28,13 @@
 
 #define ICCR_DIM (1u << 0)
 
+#define UTCR0_PE  (1u << 0)
+#define UTCR0_SBS (1u << 2)
+#define UTCR0_DSS (1u << 3)
 #define UTSR0_TFS (1u << 0)
 #define UTSR0_RFS (1u << 1)
+#define UTSR0_RID (1u << 2)
+#define UTSR1_TBY (1u << 0)
 #define UTSR1_RNE (1u << 1)
 #define UTSR1_TNF (1u << 2)
 #define UTCR3_RXE (1u << 0)
@@ -56,6 +61,15 @@
 #define DCSR_STRTA (1u << 4)
 #define DCSR_DONEB (1u << 5)
 #define DCSR_STRTB (1u << 6)
+#define DCSR_BIU   (1u << 7)
+
+#define DDAR_RW (1u << 0)
+
+#define UART_CLOCK_HZ     3686400u
+#define UART_FIFO_SIZE    12
+#define UART_RFS_LEVEL    8
+#define UART_DMA_BURST    4
+#define UART_IDLE_CHARS   3
 
 static uint64_t ticks_to_cycles(const sa1110_t *soc, uint64_t ticks) {
     return (ticks * soc->cpu_hz + SA1110_OST_HZ - 1) / SA1110_OST_HZ;
@@ -101,7 +115,7 @@ static uint32_t uart_status0(const sa1110_t *soc, int port) {
     const sa1110_uart_t *uart = &soc->uart[port];
     uint32_t status = uart->utsr0;
     if (uart->utcr[3] & UTCR3_TXE) status |= UTSR0_TFS;
-    if (uart->rx_count) status |= UTSR0_RFS;
+    if (uart->rx_count >= UART_RFS_LEVEL) status |= UTSR0_RFS;
     return status;
 }
 
@@ -115,7 +129,7 @@ static uint32_t pending(const sa1110_t *soc) {
     static const int uart_sources[4] = { 0, SA1110_IRQ_SER1_UART, SA1110_IRQ_SER2_ICP, SA1110_IRQ_SER3_UART };
     for (int port = 1; port < 4; port++) {
         uint32_t status = uart_status0(soc, port), control = soc->uart[port].utcr[3];
-        if (((status & UTSR0_TFS) && (control & UTCR3_TIE)) || ((status & UTSR0_RFS) && (control & UTCR3_RIE)))
+        if (((status & UTSR0_TFS) && (control & UTCR3_TIE)) || ((status & (UTSR0_RFS | UTSR0_RID)) && (control & UTCR3_RIE)))
             bits |= 1u << uart_sources[port];
     }
     if (soc->sscr0 & SSCR0_SSE) {
@@ -160,7 +174,110 @@ void sa1110_set_gpio_input(sa1110_t *soc, int pin, bool level) {
     if ((level && (soc->grer & bit)) || (!level && (soc->gfer & bit))) soc->gedr |= bit;
 }
 
+uint32_t sa1110_uart_baud(const sa1110_t *soc, int port) {
+    const uint32_t *control = soc->uart[port].utcr;
+    uint32_t divisor = ((control[1] & 0xFu) << 8 | (control[2] & 0xFFu)) + 1;
+    return UART_CLOCK_HZ / 16 / divisor;
+}
+
+static uint64_t uart_char_cycles(const sa1110_t *soc, int port) {
+    const uint32_t *control = soc->uart[port].utcr;
+    uint64_t divisor = ((uint64_t)(control[1] & 0xFu) << 8 | (control[2] & 0xFFu)) + 1;
+    uint64_t bits = 1 + ((control[0] & UTCR0_DSS) ? 8 : 7) + ((control[0] & UTCR0_SBS) ? 2 : 1) + (control[0] & UTCR0_PE);
+    return soc->cpu_hz * bits * 16 * divisor / UART_CLOCK_HZ;
+}
+
+static int uart_device(int port, bool receive) {
+    return port * 2 + 2 + (receive ? 1 : 0);
+}
+
+static sa1110_dma_t *dma_for(sa1110_t *soc, int device) {
+    for (int channel = 0; channel < 6; channel++) {
+        sa1110_dma_t *dma = &soc->dma[channel];
+        if ((dma->dcsr & DCSR_RUN) && (int)((dma->ddar >> 4) & 0xF) == device) return dma;
+    }
+    return NULL;
+}
+
+static bool dma_started(const sa1110_dma_t *dma) {
+    return dma && (dma->dcsr & ((dma->dcsr & DCSR_BIU) ? DCSR_STRTB : DCSR_STRTA));
+}
+
+static void dma_transfer(sa1110_t *soc, sa1110_dma_t *dma, uint8_t *value) {
+    bool buffer_b = dma->dcsr & DCSR_BIU;
+    uint32_t *offset = &soc->dma_offset[dma - soc->dma][buffer_b];
+    uint32_t address = (buffer_b ? dma->dbsb : dma->dbsa) + (*offset)++;
+    uint32_t *count = buffer_b ? &dma->dbtb : &dma->dbta;
+    if (dma->ddar & DDAR_RW) {
+        if (soc->board.dma_write) soc->board.dma_write(soc->board.context, address, *value);
+    } else if (!soc->board.dma_read || !soc->board.dma_read(soc->board.context, address, value)) {
+        *value = 0;
+    }
+    if (--*count & 0x1FFFu) return;
+    *count = 0;
+    dma->dcsr &= ~(buffer_b ? DCSR_STRTB : DCSR_STRTA);
+    dma->dcsr |= buffer_b ? DCSR_DONEB : DCSR_DONEA;
+    dma->dcsr ^= DCSR_BIU;
+}
+
+static void uart_transmit_step(sa1110_t *soc, int port, uint64_t cycle) {
+    sa1110_serial_t *serial = &soc->serial[port];
+    sa1110_dma_t *dma = dma_for(soc, uart_device(port, false));
+    if (!(soc->uart[port].utcr[3] & UTCR3_TXE) || !dma_started(dma)) {
+        serial->tx_next = 0;
+        return;
+    }
+    uint64_t step = uart_char_cycles(soc, port);
+    if (!serial->tx_next) serial->tx_next = cycle + step;
+    while (serial->tx_next <= cycle && dma_started(dma)) {
+        uint8_t value;
+        dma_transfer(soc, dma, &value);
+        if (soc->board.uart_transmit) soc->board.uart_transmit(soc->board.context, port, value);
+        serial->tx_next += step;
+    }
+    if (!dma_started(dma)) serial->tx_next = 0;
+}
+
+static void uart_receive_step(sa1110_t *soc, int port, uint64_t cycle) {
+    sa1110_uart_t *uart = &soc->uart[port];
+    sa1110_serial_t *serial = &soc->serial[port];
+    if (!(uart->utcr[3] & UTCR3_RXE) || !soc->board.uart_receive) {
+        serial->rx_next = 0;
+        return;
+    }
+    uint64_t step = uart_char_cycles(soc, port);
+    while (serial->rx_next && serial->rx_next <= cycle && uart->rx_count < UART_FIFO_SIZE) {
+        int value = soc->board.uart_receive(soc->board.context, port);
+        if (value < 0) {
+            serial->rx_next = 0;
+            break;
+        }
+        uart->rx[uart->rx_count++] = (uint8_t)value;
+        serial->rx_last = serial->rx_next;
+        serial->rx_next += step;
+    }
+    if (serial->rx_next && serial->rx_next <= cycle) serial->rx_next = cycle + step;
+    sa1110_dma_t *dma = dma_for(soc, uart_device(port, true));
+    while (dma_started(dma) && uart->rx_count >= UART_RFS_LEVEL) {
+        for (int i = 0; i < UART_DMA_BURST; i++) {
+            uint8_t value = uart->rx[0];
+            memmove(uart->rx, uart->rx + 1, (size_t)--uart->rx_count);
+            dma_transfer(soc, dma, &value);
+        }
+    }
+    if (uart->rx_count && serial->rx_last && cycle >= serial->rx_last + step * UART_IDLE_CHARS) uart->utsr0 |= UTSR0_RID;
+}
+
+void sa1110_uart_wake(sa1110_t *soc, int port, uint64_t cycle) {
+    sa1110_serial_t *serial = &soc->serial[port];
+    if (!serial->rx_next && (soc->uart[port].utcr[3] & UTCR3_RXE)) serial->rx_next = cycle + uart_char_cycles(soc, port);
+}
+
 void sa1110_advance(sa1110_t *soc, uint64_t cycle) {
+    for (int port = 1; port < 4; port++) {
+        uart_transmit_step(soc, port, cycle);
+        uart_receive_step(soc, port, cycle);
+    }
     uint32_t before = soc->last_oscr;
     uint32_t now = sa1110_oscr(soc, cycle);
     uint32_t span = now - before;
@@ -179,6 +296,16 @@ void sa1110_advance(sa1110_t *soc, uint64_t cycle) {
 
 uint64_t sa1110_next_event(const sa1110_t *soc, uint64_t cycle) {
     uint64_t next = soc->rtc_next_cycle;
+    for (int port = 1; port < 4; port++) {
+        const sa1110_serial_t *serial = &soc->serial[port];
+        const sa1110_uart_t *uart = &soc->uart[port];
+        if (serial->tx_next && serial->tx_next < next) next = serial->tx_next;
+        if (serial->rx_next && serial->rx_next < next) next = serial->rx_next;
+        if (uart->rx_count && serial->rx_last && !(uart->utsr0 & UTSR0_RID)) {
+            uint64_t idle = serial->rx_last + uart_char_cycles(soc, port) * UART_IDLE_CHARS;
+            if (idle < next) next = idle;
+        }
+    }
     uint32_t now = sa1110_oscr(soc, cycle);
     uint32_t watched = soc->oier | ((soc->ower & 1) ? 8u : 0);
     for (int n = 0; n < 4; n++) {
@@ -220,7 +347,7 @@ static bool uart_read(sa1110_t *soc, int port, uint32_t offset, uint32_t *value)
         *value = uart_status0(soc, port);
         return true;
     case 0x20:
-        *value = UTSR1_TNF | (uart->rx_count ? UTSR1_RNE : 0);
+        *value = UTSR1_TNF | (uart->rx_count ? UTSR1_RNE : 0) | (soc->serial[port].tx_next ? UTSR1_TBY : 0);
         return true;
     default:
         *value = 0;
@@ -524,6 +651,8 @@ bool sa1110_write(sa1110_t *soc, uint64_t cycle, uint32_t pa, uint32_t value) {
         uint32_t field = offset & 0x1F;
         if (field == 0x04) {
             dma->dcsr |= value & 0x7Fu;
+            if (value & DCSR_STRTA) dma->dcsr &= ~DCSR_DONEA;
+            if (value & DCSR_STRTB) dma->dcsr &= ~DCSR_DONEB;
             return true;
         }
         if (field == 0x08) {
@@ -532,7 +661,9 @@ bool sa1110_write(sa1110_t *soc, uint64_t cycle, uint32_t pa, uint32_t value) {
         }
         uint32_t *slot = dma_field(dma, field);
         if (slot) {
-            *slot = value;
+            *slot = field == 0x14 || field == 0x1C ? value & 0x1FFFu : value;
+            if (field == 0x10 || field == 0x14) soc->dma_offset[channel][0] = 0;
+            if (field == 0x18 || field == 0x1C) soc->dma_offset[channel][1] = 0;
             return true;
         }
         break;

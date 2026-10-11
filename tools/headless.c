@@ -1,6 +1,7 @@
 #include "core/agent.h"
 #include "core/machine.h"
 #include "core/state.h"
+#include "net/serial_link.h"
 #include "util/png.h"
 
 #include <stdio.h>
@@ -11,7 +12,7 @@
 #define INPUT_MAX 256
 #define PROFILE_SLOTS 4096
 
-typedef enum { INPUT_KEY, INPUT_TAP } input_kind_t;
+typedef enum { INPUT_KEY, INPUT_TAP, INPUT_SERIAL } input_kind_t;
 
 typedef struct {
     double at;
@@ -19,6 +20,7 @@ typedef struct {
     int code;
     int x, y;
     bool down;
+    char text[64];
 } input_event_t;
 
 typedef struct {
@@ -51,12 +53,18 @@ typedef struct {
     uint32_t count_pc;
     bool count_pc_enabled;
     const char *agent_socket;
+    double realtime;
+    double net_at;
+    double cable_at;
+    int tcp_port;
+    net_gateway_options_t net_options;
 } options_t;
 
 typedef struct {
     options_t options;
     machine_t machine;
     agent_t *agent;
+    serial_link_t serial;
     FILE *trace;
     bool stopped;
     int exceptions_shown;
@@ -196,12 +204,20 @@ static void usage(void) {
             "  --trace-from=N     start tracing after N instructions\n"
             "  --stop-at=PC       stop when PC is reached\n"
             "  --agent=SOCKET     pass messages between a guest agent's swi 0x51CE mailbox and one client on this Unix socket\n"
+            "  --realtime[=N]     pace emulated time at N times real time (default 1), for RAPI and agent clients\n"
+            "  --net=SECONDS      connect COM1 to the PPP gateway and web proxy\n"
+            "  --rapi=SOCKET      expose the Jornada's RAPI port on a Unix socket, for jornada-rapi --socket\n"
+            "  --rapi-port=PORT   expose the Jornada's RAPI port on this TCP port on all interfaces\n"
+            "  --tcp=PORT         offer COM1 as raw bytes on this TCP port, with the cable connected while a client is attached\n"
+            "  --user-agent=TEXT  the web proxy's user agent\n"
+            "  --cable=SECONDS    connect a bare serial cable, with nothing at the other end\n"
+            "  --cable-send=SECONDS:TEXT  send bytes down the cable (\\r and \\n allowed); anything CE sends is printed\n"
             "  --count-pc=PC      count exact executions at a virtual address\n");
 }
 
 static bool parse_options(headless_t *headless, int argc, char **argv) {
     options_t *options = &headless->options;
-    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1 };
+    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1, .net_at = -1, .cable_at = -1};
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (!strncmp(arg, "--rom=", 6)) options->rom = arg + 6;
@@ -239,6 +255,26 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--trace=", 8)) headless->trace = fopen(arg + 8, "w");
         else if (!strncmp(arg, "--trace-from=", 13)) options->trace_from = strtoull(arg + 13, NULL, 0);
         else if (!strncmp(arg, "--agent=", 8)) options->agent_socket = arg + 8;
+        else if (!strcmp(arg, "--realtime")) options->realtime = 1;
+        else if (!strncmp(arg, "--realtime=", 11)) options->realtime = atof(arg + 11);
+        else if (!strncmp(arg, "--net=", 6)) options->net_at = atof(arg + 6);
+        else if (!strncmp(arg, "--cable=", 8)) options->cable_at = atof(arg + 8);
+        else if (!strncmp(arg, "--tcp=", 6)) options->tcp_port = atoi(arg + 6);
+        else if (!strncmp(arg, "--rapi=", 7)) options->net_options.rapi_socket = arg + 7;
+        else if (!strncmp(arg, "--rapi-port=", 12)) options->net_options.rapi_port = atoi(arg + 12);
+        else if (!strncmp(arg, "--user-agent=", 13)) options->net_options.user_agent = arg + 13;
+        else if (!strncmp(arg, "--cable-send=", 13)) {
+            input_event_t event = { .kind = INPUT_SERIAL };
+            int used = 0;
+            if (sscanf(arg + 13, "%lf:%n", &event.at, &used) != 1 || !used) return false;
+            for (const char *text = arg + 13 + used; *text && strlen(event.text) < sizeof event.text - 1; text++) {
+                char value = *text;
+                if (value == '\\' && text[1] == 'r') value = '\r', text++;
+                else if (value == '\\' && text[1] == 'n') value = '\n', text++;
+                event.text[strlen(event.text)] = value;
+            }
+            add_input(headless, event);
+        }
         else if (!strncmp(arg, "--stop-at=", 10)) options->stop_at = (uint32_t)strtoul(arg + 10, NULL, 16);
         else if (!strncmp(arg, "--count-pc=", 11)) {
             options->count_pc = (uint32_t)strtoul(arg + 11, NULL, 16);
@@ -280,6 +316,15 @@ static bool start_machine(headless_t *headless) {
         fprintf(stderr, "headless: cannot listen on agent socket %s\n", options->agent_socket);
         return false;
     }
+    serial_link_init(&headless->serial, log_stderr);
+    if (options->tcp_port) {
+        headless->serial.tcp_port = options->tcp_port;
+        const char *failure = serial_link_open(&headless->serial, SERIAL_TCP, NULL);
+        if (failure) {
+            fprintf(stderr, "headless: %s\n", failure);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -300,6 +345,7 @@ static void apply_inputs(headless_t *headless, double now) {
         input_event_t *event = &headless->inputs[i];
         if (event->at < 0 || event->at > now) continue;
         if (event->kind == INPUT_KEY) machine_key(&headless->machine, (uint8_t)event->code, event->down);
+        else if (event->kind == INPUT_SERIAL) machine_serial_send(&headless->machine, (const uint8_t *)event->text, strlen(event->text));
         else machine_touch(&headless->machine, event->down, event->x, event->y);
         event->at = -1;
     }
@@ -340,11 +386,53 @@ static void finish_audio(headless_t *headless) {
     printf("audio: %u frames at %u Hz\n", headless->wav_frames, headless->wav_rate);
 }
 
+static void step_serial(headless_t *headless, double now) {
+    const options_t *options = &headless->options;
+    machine_t *machine = &headless->machine;
+    serial_link_t *serial = &headless->serial;
+    if (options->net_at >= 0 && now >= options->net_at && serial->mode == SERIAL_OFF) {
+        serial->options = options->net_options;
+        serial_link_open(serial, SERIAL_NETWORK, NULL);
+        machine_serial_connect(machine, true);
+    }
+    if (options->cable_at >= 0 && now >= options->cable_at && !machine_serial_connected(machine) && serial->mode == SERIAL_OFF)
+        machine_serial_connect(machine, true);
+    if (serial->mode != SERIAL_OFF) {
+        serial_link_pump(serial, machine);
+        if (serial->mode == SERIAL_TCP && serial_link_attached(serial) != machine_serial_connected(machine))
+            machine_serial_connect(machine, serial_link_attached(serial));
+        return;
+    }
+    uint8_t sent[4096];
+    size_t count = machine_serial_take(machine, sent, sizeof sent);
+    if (!count) return;
+    printf("serial: %zu bytes at %u baud t=%.3f:", count, machine_serial_baud(machine), machine_seconds(machine));
+    for (size_t i = 0; i < count && i < 64; i++) printf(" %02X", sent[i]);
+    printf("\n");
+}
+
+static double wall_seconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+}
+
+static void pace(headless_t *headless, double wall_start) {
+    double realtime = headless->options.realtime;
+    if (realtime <= 0) return;
+    double due = wall_start + (double)(headless->machine.cpu.cycles - headless->start_cycles) / MACHINE_CPU_HZ / realtime;
+    double ahead = due - wall_seconds();
+    if (ahead <= 0) return;
+    struct timespec wait = { (time_t)ahead, (long)((ahead - (double)(time_t)ahead) * 1e9) };
+    nanosleep(&wait, NULL);
+}
+
 static void run(headless_t *headless) {
     const options_t *options = &headless->options;
     machine_t *machine = &headless->machine;
     uint64_t total = headless->start_cycles + (uint64_t)(options->seconds * MACHINE_CPU_HZ);
     uint64_t slice = MACHINE_CPU_HZ / 100;
+    double wall_start = wall_seconds();
     while (machine->cpu.cycles < total && !machine->powered_off && !headless->stopped) {
         double now = (double)(machine->cpu.cycles - headless->start_cycles) / MACHINE_CPU_HZ;
         if (options->stats_every > 0 && now >= headless->next_stats) {
@@ -353,8 +441,10 @@ static void run(headless_t *headless) {
         }
         apply_inputs(headless, now);
         if (headless->agent) agent_poll(headless->agent, &machine->mailbox);
+        step_serial(headless, now);
         uint64_t left = total - machine->cpu.cycles;
         machine_run(machine, left < slice ? left : slice);
+        pace(headless, wall_start);
         if (options->wav_path) record_audio(headless);
     }
 }
@@ -421,6 +511,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "headless: cannot write %s\n", options->screenshot_path);
     if (headless->trace) fclose(headless->trace);
     agent_destroy(headless->agent);
+    serial_link_close(&headless->serial);
     machine_free(&headless->machine);
     free(headless);
     return 0;
