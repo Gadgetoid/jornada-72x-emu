@@ -47,6 +47,8 @@ typedef struct {
     int exceptions;
     uint64_t trace_from;
     uint32_t stop_at;
+    uint32_t count_pc;
+    bool count_pc_enabled;
 } options_t;
 
 typedef struct {
@@ -59,6 +61,8 @@ typedef struct {
     input_event_t inputs[INPUT_MAX];
     int input_count;
     profile_entry_t profile[PROFILE_SLOTS];
+    uint64_t counted_pc_hits;
+    uint64_t profile_sample_count;
     uint64_t start_cycles;
     double next_stats;
     uint64_t last_irqs;
@@ -86,6 +90,16 @@ static void profile_sample(headless_t *headless, uint32_t pc, uint32_t pid) {
     }
 }
 
+static uint32_t profile_sample_hash(uint64_t instruction) {
+    uint32_t value = (uint32_t)(instruction ^ (instruction >> 32));
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16;
+    return value;
+}
+
 static int profile_order(const void *a, const void *b) {
     const profile_entry_t *left = a, *right = b;
     return left->count < right->count ? 1 : left->count > right->count ? -1 : 0;
@@ -95,9 +109,14 @@ static bool before(void *context, uint32_t pc) {
     headless_t *headless = context;
     const options_t *options = &headless->options;
     arm_cpu_t *cpu = &headless->machine.cpu;
-    if (options->profiling && cpu->instructions >= options->trace_from && (!options->profile_user_only || pc < 0x80000000u)
-        && !(cpu->instructions & 255))
-        profile_sample(headless, pc, cpu->pid);
+    if (options->profiling && cpu->instructions >= options->trace_from &&
+        (!options->profile_user_only || pc < 0x80000000u)) {
+        if (!(profile_sample_hash(cpu->instructions) & 255u)) {
+            headless->profile_sample_count++;
+            profile_sample(headless, pc, cpu->pid);
+        }
+    }
+    if (options->count_pc_enabled && pc == options->count_pc) headless->counted_pc_hits++;
     if (headless->trace && cpu->instructions >= options->trace_from) {
         fprintf(headless->trace, "%08x cpsr %08x r0 %08x r1 %08x r2 %08x r3 %08x sp %08x lr %08x\n",
                 pc, cpu->cpsr, cpu->r[0], cpu->r[1], cpu->r[2], cpu->r[3], cpu->r[13], cpu->r[14]);
@@ -172,7 +191,8 @@ static void usage(void) {
             "  --exceptions=N     print the first N exceptions other than interrupts\n"
             "  --trace=PATH       write a per-instruction trace\n"
             "  --trace-from=N     start tracing after N instructions\n"
-            "  --stop-at=PC       stop when PC is reached\n");
+            "  --stop-at=PC       stop when PC is reached\n"
+            "  --count-pc=PC      count exact executions at a virtual address\n");
 }
 
 static bool parse_options(headless_t *headless, int argc, char **argv) {
@@ -215,6 +235,10 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--trace=", 8)) headless->trace = fopen(arg + 8, "w");
         else if (!strncmp(arg, "--trace-from=", 13)) options->trace_from = strtoull(arg + 13, NULL, 0);
         else if (!strncmp(arg, "--stop-at=", 10)) options->stop_at = (uint32_t)strtoul(arg + 10, NULL, 16);
+        else if (!strncmp(arg, "--count-pc=", 11)) {
+            options->count_pc = (uint32_t)strtoul(arg + 11, NULL, 16);
+            options->count_pc_enabled = true;
+        }
         else return false;
     }
     return true;
@@ -242,7 +266,7 @@ static bool start_machine(headless_t *headless) {
     machine->cpu.hook_context = headless;
     machine->cpu.on_undefined = undefined_instruction;
     machine->cpu.on_exception = exception_raised;
-    if (headless->trace || options->stop_at || options->profiling) machine->cpu.before = before;
+    if (headless->trace || options->stop_at || options->profiling || options->count_pc_enabled) machine->cpu.before = before;
     return true;
 }
 
@@ -324,10 +348,9 @@ static void run(headless_t *headless) {
 static void print_profile(headless_t *headless) {
     profile_entry_t *profile = headless->profile;
     qsort(profile, PROFILE_SLOTS, sizeof profile[0], profile_order);
-    uint64_t total_samples = 0;
-    for (int i = 0; i < PROFILE_SLOTS; i++) total_samples += profile[i].count;
     for (int i = 0; i < 25 && profile[i].count; i++)
-        printf("  %08x %5.1f%%\n", profile[i].pc, 100.0 * (double)profile[i].count / (double)total_samples);
+        printf("  %08x %5.1f%%\n", profile[i].pc,
+               100.0 * (double)profile[i].count / (double)headless->profile_sample_count);
 }
 
 static void print_report(headless_t *headless, double host) {
@@ -349,6 +372,9 @@ static void print_report(headless_t *headless, double host) {
                entry->count, entry->value, entry->pc);
     }
     if (headless->options.profiling) print_profile(headless);
+    if (headless->options.count_pc_enabled)
+        printf("pc %08x exact executions %llu\n", headless->options.count_pc,
+               (unsigned long long)headless->counted_pc_hits);
 }
 
 static void dump_memory(headless_t *headless) {

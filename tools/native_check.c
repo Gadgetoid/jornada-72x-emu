@@ -13,6 +13,15 @@
 #define CE_CODE_BASE 0x01FD8800u
 #define CE_CODE_SIZE 0x1000u
 #define CE_CODE_ROM_OFFSET 0x000B3800u
+#define KERNEL_CODE_BASE 0x80075000u
+#define KERNEL_CODE_SIZE 0x1000u
+#define KERNEL_CODE_ROM_OFFSET 0x00075000u
+#define CACHE_MAIN_BASE 0x85000000u
+#define CACHE_MAIN_SIZE 0x2000u
+#define CACHE_MINI_BASE 0x85100000u
+#define CACHE_MINI_SIZE 0x400u
+#define CACHE_SWEEP_ADDRESS 0x80075354u
+#define CACHE_SWEEP_RETURN 0x80076000u
 
 typedef struct {
     uint8_t memory[MEMORY_SIZE];
@@ -20,9 +29,14 @@ typedef struct {
 } test_memory_t;
 
 static uint8_t ce_code[CE_CODE_SIZE];
+static uint8_t kernel_code[KERNEL_CODE_SIZE];
 
 static uint8_t *map_memory(void *context, uint32_t va, bool write) {
     test_memory_t *memory = context;
+    if (va >= CACHE_MAIN_BASE && va - CACHE_MAIN_BASE < CACHE_MAIN_SIZE)
+        return memory->memory + (va - CACHE_MAIN_BASE);
+    if (va >= CACHE_MINI_BASE && va - CACHE_MINI_BASE < CACHE_MINI_SIZE)
+        return memory->memory + CACHE_MAIN_SIZE + (va - CACHE_MINI_BASE);
     if (va < MEMORY_BASE || va - MEMORY_BASE >= MEMORY_SIZE) return NULL;
     if (write && memory->fail_write_at && va >= memory->fail_write_at) return NULL;
     return memory->memory + (va - MEMORY_BASE);
@@ -45,6 +59,8 @@ static bool write_memory(void *context, uint32_t pa, int size, uint32_t value) {
 
 static uint8_t *page_memory(void *context, uint32_t pa, bool write) {
     if (pa >= CE_CODE_BASE && pa - CE_CODE_BASE < CE_CODE_SIZE) return write ? NULL : ce_code + (pa - CE_CODE_BASE);
+    if (pa >= KERNEL_CODE_BASE && pa - KERNEL_CODE_BASE < KERNEL_CODE_SIZE)
+        return write ? NULL : kernel_code + (pa - KERNEL_CODE_BASE);
     return map_memory(context, pa, write);
 }
 
@@ -86,6 +102,32 @@ static int check_random_cases(void) {
             return 1;
         }
     }
+    return 0;
+}
+
+static int check_data_tlb_mapping(void) {
+    static arm_cpu_t cpu;
+    test_memory_t memory = { 0 };
+    cpu.bus = (arm_bus_t){ .context = &memory, .read = read_memory, .write = write_memory, .page = page_memory };
+    arm_reset(&cpu);
+    cpu.bus.context = &memory;
+    cpu.control = ARM_CONTROL_M;
+    cpu.ttb = MEMORY_BASE;
+    cpu.dacr = 3;
+    uint32_t section = MEMORY_BASE | 2;
+    memcpy(memory.memory + 8, &section, sizeof section);
+    uint32_t va = 0x00200100u;
+    uint8_t *mapped = arm_map_virtual(&cpu, va, false, true);
+    bool filled = false;
+    for (int i = 0; i < ARM_TLB_ENTRIES; i++) {
+        arm_tlb_entry_t *entry = &cpu.data_tlb.entries[i];
+        if (entry->serial && (va & ~entry->mask) == entry->base) filled = true;
+    }
+    if (mapped != memory.memory + 0x100 || !filled || arm_map_virtual(&cpu, 0x00300100u, false, true)) {
+        fprintf(stderr, "native mapping did not fill or respect the data TLB\n");
+        return 1;
+    }
+    printf("native map: data-TLB miss filled and unmapped section rejected\n");
     return 0;
 }
 
@@ -189,8 +231,68 @@ static int check_ce_cases(void) {
     return 0;
 }
 
+static int check_cache_sweep(void) {
+    FILE *rom = fopen("rom/jornada720.bin", "rb");
+    if (!rom || fseek(rom, KERNEL_CODE_ROM_OFFSET, SEEK_SET) ||
+        fread(kernel_code, 1, sizeof kernel_code, rom) != sizeof kernel_code) {
+        if (rom) fclose(rom);
+        fprintf(stderr, "cannot load kernel cache-sweep code from ROM\n");
+        return 1;
+    }
+    fclose(rom);
+
+    static arm_cpu_t cpu;
+    test_memory_t native_memory_state = { 0 }, ce_memory_state = { 0 };
+    native_memory_t memory = { .context = &native_memory_state, .map = map_memory };
+    cpu.bus = (arm_bus_t){ .context = &ce_memory_state, .read = read_memory, .write = write_memory, .page = page_memory };
+    uint32_t random_state = 0xCACE1110u;
+    for (uint32_t test = 0; test < 32; test++) {
+        for (uint32_t i = 0; i < sizeof native_memory_state.memory; i++)
+            native_memory_state.memory[i] = (uint8_t)random_next(&random_state);
+        memcpy(ce_memory_state.memory, native_memory_state.memory, sizeof native_memory_state.memory);
+        uint32_t last_value;
+        if (!native_cache_sweep(&memory, &last_value)) {
+            fprintf(stderr, "native cache sweep rejected mapped test pages\n");
+            return 1;
+        }
+
+        uint32_t return_address = CACHE_SWEEP_RETURN;
+        arm_reset(&cpu);
+        cpu.bus.context = &ce_memory_state;
+        cpu.hook_context = &return_address;
+        cpu.before = stop_at_return;
+        arm_set_cpsr(&cpu, ARM_MODE_SVC);
+        for (int reg = 3; reg <= 12; reg++) cpu.r[reg] = 0xA5110000u | (uint32_t)reg;
+        cpu.r[13] = MEMORY_BASE + MEMORY_SIZE - 16;
+        cpu.r[14] = return_address;
+        cpu.r[15] = CACHE_SWEEP_ADDRESS;
+        cpu.cycles = 0;
+        cpu.instructions = 0;
+        arm_run(&cpu, 10000);
+        if (cpu.r[15] != return_address || cpu.r[0] != 0x85100400u || cpu.r[1] != 0 || cpu.r[2] != last_value ||
+            cpu.r[13] != MEMORY_BASE + MEMORY_SIZE - 16 || cpu.instructions != 870 ||
+            (cpu.cpsr & (ARM_PSR_N | ARM_PSR_Z | ARM_PSR_C | ARM_PSR_V)) != (ARM_PSR_Z | ARM_PSR_C) ||
+            memcmp(native_memory_state.memory, ce_memory_state.memory, sizeof native_memory_state.memory)) {
+            fprintf(stderr, "CE/native cache-sweep mismatch %u: pc %08x r0 %08x r1 %08x r2 %08x expected %08x "
+                    "sp %08x cpsr %08x instructions %llu memory %d\n", test, cpu.r[15], cpu.r[0], cpu.r[1], cpu.r[2],
+                    last_value, cpu.r[13], cpu.cpsr, (unsigned long long)cpu.instructions,
+                    memcmp(native_memory_state.memory, ce_memory_state.memory, sizeof native_memory_state.memory));
+            return 1;
+        }
+        for (int reg = 3; reg <= 12; reg++) {
+            if (cpu.r[reg] != (0xA5110000u | (uint32_t)reg)) {
+                fprintf(stderr, "CE cache sweep changed r%d at case %u\n", reg, test);
+                return 1;
+            }
+        }
+    }
+    printf("CE cache sweep: 32 randomized cases passed; 870 instructions preserved\n");
+    return 0;
+}
+
 int main(void) {
-    if (check_random_cases() || check_fallback_is_atomic() || check_ce_cases()) return 1;
+    if (check_random_cases() || check_data_tlb_mapping() || check_fallback_is_atomic() || check_ce_cases() ||
+        check_cache_sweep()) return 1;
     printf("native memmove: %u libc cases and atomic fallback passed\n", TEST_COUNT);
     return 0;
 }

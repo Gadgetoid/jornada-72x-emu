@@ -6,6 +6,9 @@
 
 #define MEMMOVE_ADDRESS 0x01FD8A90u
 #define MEMMOVE_WORDS 12u
+#define CACHE_SWEEP_ADDRESS 0x80075354u
+#define CACHE_SWEEP_WORDS 12u
+#define CACHE_SWEEP_CYCLES 870u
 #define OSCR_DELAY_ADDRESS 0x0004F06Cu
 #define OSCR_START_PC 0x0004F080u
 #define OSCR_DELAY_PC 0x0004F088u
@@ -22,6 +25,11 @@ static const uint32_t memmove_code[MEMMOVE_WORDS] = {
     0xBA0000D7u, 0xE2103003u, 0x0A000007u, 0xE5714001u, 0xE3530002u, 0xE5604001u,
 };
 
+static const uint32_t cache_sweep_code[CACHE_SWEEP_WORDS] = {
+    0xE3A00485u, 0xE3A01C01u, 0xE4902020u, 0xE2511001u, 0x1AFFFFFCu, 0xE3A00485u,
+    0xE2800601u, 0xE3A01020u, 0xE4902020u, 0xE2511001u, 0x1AFFFFFCu, 0xE1A0F00Eu,
+};
+
 static bool read_code(arm_cpu_t *cpu, uint32_t pc, uint32_t *code, uint32_t words) {
     for (uint32_t i = 0; i < words; i++)
         if (!arm_read_instruction_virtual(cpu, pc + i * 4, &code[i])) return false;
@@ -30,15 +38,40 @@ static bool read_code(arm_cpu_t *cpu, uint32_t pc, uint32_t *code, uint32_t word
 
 static uint8_t *native_map(void *context, uint32_t va, bool write) {
     arm_cpu_t *cpu = context;
-    uint32_t pa;
     bool user = (cpu->cpsr & ARM_PSR_MODE) == ARM_MODE_USR;
-    if (!arm_translate(cpu, va, write, user, &pa, NULL)) return NULL;
-    uint8_t *page = cpu->bus.page(cpu->bus.context, pa & ~(NATIVE_PAGE - 1), write);
-    return page ? page + (pa & (NATIVE_PAGE - 1)) : NULL;
+    return arm_map_virtual(cpu, va, write, user);
 }
 
 static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
     optimiser_t *optimiser = context;
+    if (pc == CACHE_SWEEP_ADDRESS) {
+        optimiser->cache_sweep_entries++;
+        if (!optimiser->cache_sweep_checked) {
+            uint32_t code[CACHE_SWEEP_WORDS];
+            if (!read_code(cpu, pc, code, CACHE_SWEEP_WORDS)) return false;
+            optimiser->cache_sweep_matched = memcmp(code, cache_sweep_code, sizeof code) == 0;
+            optimiser->cache_sweep_checked = true;
+        }
+        if (!optimiser->cache_sweep_matched) return false;
+        native_memory_t memory = { .context = cpu, .map = native_map };
+        uint32_t last_value;
+        if (optimiser->poll_deadline <= cpu->cycles ||
+            CACHE_SWEEP_CYCLES > optimiser->poll_deadline - cpu->cycles ||
+            !native_cache_sweep(&memory, &last_value)) {
+            optimiser->cache_sweep_fallbacks++;
+            return false;
+        }
+        optimiser->cache_sweep_hits++;
+        optimiser->cache_sweep_instructions_skipped += CACHE_SWEEP_CYCLES;
+        cpu->r[0] = 0x85100400u;
+        cpu->r[1] = 0;
+        cpu->r[2] = last_value;
+        cpu->cpsr = (cpu->cpsr & ~(ARM_PSR_N | ARM_PSR_Z | ARM_PSR_C | ARM_PSR_V)) | ARM_PSR_Z | ARM_PSR_C;
+        cpu->r[15] = cpu->r[14];
+        cpu->cycles += CACHE_SWEEP_CYCLES - 1;
+        cpu->instructions += CACHE_SWEEP_CYCLES;
+        return true;
+    }
     if ((pc & 0x01FFFFFFu) != MEMMOVE_ADDRESS) return false;
     optimiser->memmove_entries++;
     if (!optimiser->memmove_checked) {
@@ -59,6 +92,7 @@ static bool optimiser_run(void *context, arm_cpu_t *cpu, uint32_t pc) {
         return false;
     }
     optimiser->memmove_hits++;
+    optimiser->memmove_guest_cycles_charged += result.cycles;
     cpu->r[0] = result.value;
     cpu->r[15] = cpu->r[14];
     cpu->cycles += result.cycles - 1;
@@ -70,6 +104,8 @@ void optimiser_init(optimiser_t *optimiser, arm_cpu_t *cpu) {
     memset(optimiser, 0, sizeof *optimiser);
     optimiser->cpu = cpu;
     uint32_t bit = (MEMMOVE_ADDRESS >> 2) & (OPTIMISER_FILTER_BITS - 1);
+    optimiser->filter[bit >> 3] |= 1u << (bit & 7);
+    bit = (CACHE_SWEEP_ADDRESS >> 2) & (OPTIMISER_FILTER_BITS - 1);
     optimiser->filter[bit >> 3] |= 1u << (bit & 7);
     cpu->optimiser_context = optimiser;
     cpu->on_optimiser = optimiser_run;
@@ -110,6 +146,7 @@ bool optimiser_poll(optimiser_t *optimiser, uint32_t pa, uint32_t pc, uint32_t v
     uint64_t resume = deadline > 4 ? deadline - 4 : cpu->cycles;
     if (resume > optimiser->poll_deadline) resume = optimiser->poll_deadline;
     if (resume <= cpu->cycles) return false;
+    optimiser->poll_cycles_advanced += resume - cpu->cycles;
     cpu->cycles = resume;
     optimiser->poll_skips++;
     return true;
@@ -120,7 +157,16 @@ void optimiser_print(const optimiser_t *optimiser, FILE *out) {
             (unsigned long long)optimiser->memmove_entries,
             optimiser->memmove_checked ? (optimiser->memmove_matched ? "matched" : "mismatched") : "unchecked",
             (unsigned long long)optimiser->memmove_fallbacks, (unsigned long long)optimiser->memmove_hits);
+    fprintf(out, "native cache sweep: entries %llu, fingerprint %s, fallbacks %llu, hits %llu\n",
+            (unsigned long long)optimiser->cache_sweep_entries,
+            optimiser->cache_sweep_checked ? (optimiser->cache_sweep_matched ? "matched" : "mismatched") : "unchecked",
+            (unsigned long long)optimiser->cache_sweep_fallbacks, (unsigned long long)optimiser->cache_sweep_hits);
     fprintf(out, "native OSCR delay: fingerprint %s, poll skips %llu\n",
             optimiser->poll_checked ? (optimiser->poll_matched ? "matched" : "mismatched") : "unchecked",
             (unsigned long long)optimiser->poll_skips);
+    fprintf(out, "expected work: cache sweep skipped %llu ARM instructions; memmove charged %llu estimated ARM cycles; "
+            "OSCR advanced %llu guest cycles\n",
+            (unsigned long long)optimiser->cache_sweep_instructions_skipped,
+            (unsigned long long)optimiser->memmove_guest_cycles_charged,
+            (unsigned long long)optimiser->poll_cycles_advanced);
 }

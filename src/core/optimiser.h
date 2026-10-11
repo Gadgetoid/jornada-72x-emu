@@ -16,12 +16,20 @@ typedef struct {
     uint64_t memmove_entries;
     uint64_t memmove_fallbacks;
     uint64_t memmove_hits;
+    uint64_t memmove_guest_cycles_charged;
+    bool cache_sweep_checked;
+    bool cache_sweep_matched;
+    uint64_t cache_sweep_entries;
+    uint64_t cache_sweep_fallbacks;
+    uint64_t cache_sweep_hits;
+    uint64_t cache_sweep_instructions_skipped;
     bool poll_checked;
     bool poll_matched;
     bool poll_start_valid;
     uint32_t poll_start;
     uint64_t poll_deadline;
     uint64_t poll_skips;
+    uint64_t poll_cycles_advanced;
     uint8_t filter[OPTIMISER_FILTER_BITS / 8];
 } optimiser_t;
 

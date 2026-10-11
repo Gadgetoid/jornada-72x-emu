@@ -62,6 +62,8 @@ app_check() {
 ./headless --seconds=130 $calibrate --tap=102:605:226 --tap=106:605:226 --tap=110:605:226 --tap=114:605:226 --tap=118:605:226 --tap=122:605:226 --screenshot=$out/continuous.png > /dev/null
 ./headless --seconds=0.01 --screenshot=$out/cold-start.png > /dev/null
 ./headless --seconds=0.01 --optimisations --screenshot=$out/cold-start-optimised.png > "$out/cold-start-optimised.log"
+./headless --seconds=8 --screenshot=$out/cache-sweep.png > /dev/null
+./headless --seconds=8 --optimisations --screenshot=$out/cache-sweep-optimised.png > "$out/cache-sweep-optimised.log"
 run_app_case pocket-word 514 35
 run_app_case my-handheld-pc 34 18
 run_app_case pocket-excel 590 18
@@ -70,10 +72,17 @@ app_check
 check "resume matches continuous run" "$(shasum < $out/desktop.png)" "$(shasum < $out/continuous.png)"
 check "desktop stays clear of battery warnings" "$(shasum < $out/idle-full.png)" "$(shasum < $out/idle.png)"
 check "cold-start screen matches with optimisations" "$(shasum < $out/cold-start.png)" "$(shasum < $out/cold-start-optimised.png)"
+check "cache-sweep screen matches with optimisations" "$(shasum < $out/cache-sweep.png)" "$(shasum < $out/cache-sweep-optimised.png)"
 if ! grep -Eq '^native OSCR delay: fingerprint matched, poll skips [1-9][0-9]*$' "$out/cold-start-optimised.log"; then
     echo "FAIL native OSCR delay exercised"
     failed=1
 else
     echo "ok   native OSCR delay exercised"
+fi
+if ! grep -Eq '^native cache sweep: entries [1-9][0-9]*, fingerprint matched, fallbacks [0-9]+, hits [1-9][0-9]*$' "$out/cache-sweep-optimised.log"; then
+    echo "FAIL native cache sweep exercised"
+    failed=1
+else
+    echo "ok   native cache sweep exercised"
 fi
 exit $failed

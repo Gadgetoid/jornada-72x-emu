@@ -128,6 +128,7 @@ void arm_run(arm_cpu_t *cpu, uint64_t until_cycle);
 void arm_set_cpsr(arm_cpu_t *cpu, uint32_t value);
 void arm_flush_translations(arm_cpu_t *cpu);
 bool arm_translate(arm_cpu_t *cpu, uint32_t va, bool write, bool user, uint32_t *pa, uint32_t *fault);
+uint8_t *arm_map_virtual(arm_cpu_t *cpu, uint32_t va, bool write, bool user);
 bool arm_read_instruction_virtual(arm_cpu_t *cpu, uint32_t va, uint32_t *value);
 bool arm_read_virtual(arm_cpu_t *cpu, uint32_t va, int size, uint32_t *value);
 bool arm_write_virtual(arm_cpu_t *cpu, uint32_t va, int size, uint32_t value);

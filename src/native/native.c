@@ -3,11 +3,26 @@
 #include <string.h>
 
 #define NATIVE_MOVE_MAX 0x04000000u
+#define CACHE_MAIN_BASE 0x85000000u
+#define CACHE_MAIN_SIZE 0x2000u
+#define CACHE_MINI_BASE 0x85100000u
+#define CACHE_MINI_SIZE 0x400u
+#define CACHE_SWEEP_CYCLES 870u
 
 uint64_t native_memmove_cycles(uint32_t length) {
     if (length < 8) return 12 + (uint64_t)length * 3;
     if (length < 32) return 8 + ((uint64_t)length * 11 + 2) / 5;
     return 10 + ((uint64_t)length * 4 + 2) / 5;
+}
+
+bool native_cache_sweep(const native_memory_t *memory, uint32_t *last_value) {
+    for (uint32_t offset = 0; offset < CACHE_MAIN_SIZE; offset += NATIVE_PAGE)
+        if (!memory->map(memory->context, CACHE_MAIN_BASE + offset, false)) return false;
+    if (!memory->map(memory->context, CACHE_MINI_BASE, false)) return false;
+    uint8_t *last = memory->map(memory->context, CACHE_MINI_BASE + CACHE_MINI_SIZE - 32, false);
+    if (!last) return false;
+    memcpy(last_value, last, sizeof *last_value);
+    return true;
 }
 
 static bool range_mapped(const native_memory_t *memory, uint32_t va, uint32_t length, bool write) {

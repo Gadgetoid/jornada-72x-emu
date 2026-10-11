@@ -18,3 +18,4 @@ typedef bool (*native_fn)(const native_memory_t *memory, const uint32_t *argumen
 
 bool native_memmove(const native_memory_t *memory, const uint32_t *arguments, native_result_t *result);
 uint64_t native_memmove_cycles(uint32_t length);
+bool native_cache_sweep(const native_memory_t *memory, uint32_t *last_value);

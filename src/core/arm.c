@@ -293,6 +293,13 @@ static arm_page_cache_t *lookup(arm_cpu_t *cpu, int access, uint32_t mva, bool u
     return slot;
 }
 
+uint8_t *arm_map_virtual(arm_cpu_t *cpu, uint32_t va, bool write, bool user) {
+    uint32_t mva = modified_address(cpu, va), fault = 0;
+    arm_page_cache_t *slot = lookup(cpu, write ? ACCESS_WRITE : ACCESS_READ, mva, user, &fault);
+    if (!slot || !slot->host) return NULL;
+    return slot->host + (mva & BLOCK_MASK);
+}
+
 static void raise_exception(arm_cpu_t *cpu, uint32_t mode, uint32_t vector, uint32_t link) {
     if (cpu->on_exception) cpu->on_exception(cpu->hook_context, vector, link);
     uint32_t saved = cpu->cpsr;
