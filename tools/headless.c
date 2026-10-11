@@ -224,14 +224,14 @@ static bool start_machine(headless_t *headless) {
     const options_t *options = &headless->options;
     machine_t *machine = &headless->machine;
     if (!machine_init(machine, options->rom, options->eeprom)) {
-        fprintf(stderr, "cannot load %s\n", options->rom);
+        fprintf(stderr, "headless: cannot load %s\n", options->rom);
         return false;
     }
     machine->soc.rcnr = options->rtc_start;
     if (options->load_path) {
         state_result_t loaded = state_load(machine, options->load_path, 0);
         if (loaded != STATE_OK) {
-            fprintf(stderr, "%s: %s\n", options->load_path, state_describe(loaded));
+            fprintf(stderr, "headless: %s: %s\n", options->load_path, state_describe(loaded));
             return false;
         }
         headless->start_cycles = machine->cpu.cycles;
@@ -375,10 +375,10 @@ int main(int argc, char **argv) {
     run(headless);
     print_report(headless, (double)(clock() - started) / CLOCKS_PER_SEC);
     if (headless->wav) finish_audio(headless);
-    if (options->save_path && !state_save(&headless->machine, options->save_path, 0)) fprintf(stderr, "cannot save %s\n", options->save_path);
+    if (options->save_path && !state_save(&headless->machine, options->save_path, 0)) fprintf(stderr, "headless: cannot save %s\n", options->save_path);
     if (options->dump_path) dump_memory(headless);
     if (options->screenshot_path && !screenshot(&headless->machine, options->screenshot_path))
-        fprintf(stderr, "cannot write %s\n", options->screenshot_path);
+        fprintf(stderr, "headless: cannot write %s\n", options->screenshot_path);
     if (headless->trace) fclose(headless->trace);
     machine_free(&headless->machine);
     free(headless);

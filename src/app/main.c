@@ -158,7 +158,7 @@ static void run_frame(app_t *app) {
 static bool start_machine(app_t *app) {
     launch_t *launch = &app->launch;
     if (!machine_init(&app->machine, launch->rom, launch->eeprom)) {
-        fprintf(stderr, "cannot load %s or %s\n", launch->rom, launch->eeprom);
+        fprintf(stderr, "jornada720: cannot load %s or %s\n", launch->rom, launch->eeprom);
         return false;
     }
     if (launch->state_file) snprintf(app->state_path, sizeof app->state_path, "%s", launch->state_file);
@@ -175,17 +175,17 @@ static bool start_machine(app_t *app) {
 
 static bool open_window(app_t *app) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
-        fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        fprintf(stderr, "jornada720: SDL_Init: %s\n", SDL_GetError());
         return false;
     }
     if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_RESIZABLE, &app->window,
                                      &app->renderer)) {
-        fprintf(stderr, "SDL_CreateWindowAndRenderer: %s\n", SDL_GetError());
+        fprintf(stderr, "jornada720: SDL_CreateWindowAndRenderer: %s\n", SDL_GetError());
         return false;
     }
     app->view = view_create(app->renderer);
     if (!app->view) {
-        fprintf(stderr, "cannot create the screen texture: %s\n", SDL_GetError());
+        fprintf(stderr, "jornada720: cannot create the screen texture: %s\n", SDL_GetError());
         return false;
     }
     return true;
@@ -195,11 +195,11 @@ static void open_audio(app_t *app) {
     app->audio_spec = (SDL_AudioSpec){ SDL_AUDIO_S16LE, 2, 22050 };
     app->audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &app->audio_spec, NULL, NULL);
     if (app->audio) SDL_ResumeAudioStreamDevice(app->audio);
-    else fprintf(stderr, "no audio: %s\n", SDL_GetError());
+    else fprintf(stderr, "jornada720: no audio: %s\n", SDL_GetError());
 }
 
 static void shut_down(app_t *app) {
-    if (!state_save(&app->machine, app->state_path, (uint64_t)time(NULL))) fprintf(stderr, "cannot save %s\n", app->state_path);
+    if (!state_save(&app->machine, app->state_path, (uint64_t)time(NULL))) fprintf(stderr, "jornada720: cannot save %s\n", app->state_path);
     if (app->audio) SDL_DestroyAudioStream(app->audio);
     view_destroy(app->view);
     SDL_DestroyRenderer(app->renderer);
