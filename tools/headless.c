@@ -3,6 +3,7 @@
 #include "core/key_text.h"
 #include "core/machine.h"
 #include "core/state.h"
+#include "net/ethernet_link.h"
 #include "net/serial_link.h"
 #include "util/png.h"
 
@@ -66,6 +67,7 @@ typedef struct {
     double cable_at;
     int tcp_port;
     int ir_tcp_port;
+    double ethernet_at;
     int gdb_port;
     const char *gdb_process;
     const char *card[MACHINE_SOCKETS];
@@ -79,6 +81,7 @@ typedef struct {
     gdb_t *debugger;
     serial_link_t serial;
     serial_link_t ir;
+    ethernet_link_t ethernet;
     bool soft_reset_done;
     FILE *trace;
     bool stopped;
@@ -236,6 +239,7 @@ static void usage(void) {
             "  --save=PATH        save state at the end\n"
             "  --card=IMAGE       insert a CompactFlash card backed by a raw disk image, after --load\n"
             "  --pc-card=IMAGE    insert a card image in the PC Card slot, after --load\n"
+            "  --ethernet[=SECONDS]  insert an NE2000 Ethernet card in the PC Card slot, on its own network with DHCP, after --load or at SECONDS\n"
             "  --eject-card=T     eject the CompactFlash card at T seconds\n"
             "  --eject-pc-card=T  eject the PC Card at T seconds\n"
             "  --wav=PATH         record audio output to a WAV file\n"
@@ -268,7 +272,7 @@ static void usage(void) {
 
 static bool parse_options(headless_t *headless, int argc, char **argv) {
     options_t *options = &headless->options;
-    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1, .soft_reset_at = -1, .net_at = -1, .cable_at = -1};
+    *options = (options_t){ .rom = "rom/jornada720.bin", .eeprom = "rom/jorn720_eeprom.bin", .seconds = 5, .backup_reading = -1, .soft_reset_at = -1, .net_at = -1, .cable_at = -1, .ethernet_at = -1 };
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (!strncmp(arg, "--rom=", 6)) options->rom = arg + 6;
@@ -290,6 +294,8 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--save=", 7)) options->save_path = arg + 7;
         else if (!strncmp(arg, "--card=", 7)) options->card[MACHINE_SOCKET_CF] = arg + 7;
         else if (!strncmp(arg, "--pc-card=", 10)) options->card[MACHINE_SOCKET_PC_CARD] = arg + 10;
+        else if (!strcmp(arg, "--ethernet")) options->ethernet_at = 0;
+        else if (!strncmp(arg, "--ethernet=", 11)) options->ethernet_at = atof(arg + 11);
         else if (!strncmp(arg, "--eject-card=", 13))
             add_input(headless, (input_event_t){ .at = atof(arg + 13), .kind = INPUT_EJECT, .code = MACHINE_SOCKET_CF });
         else if (!strncmp(arg, "--eject-pc-card=", 16))
@@ -383,6 +389,7 @@ static bool start_machine(headless_t *headless) {
             return false;
         }
     }
+    ethernet_link_init(&headless->ethernet, log_stderr, options->net_options.user_agent);
     machine_set_optimisations(machine, options->optimisations);
     machine_set_speed(machine, options->speed);
     machine_set_host_clock(machine, options->host_clock);
@@ -505,6 +512,11 @@ static void step_serial(headless_t *headless, double now) {
     machine_t *machine = &headless->machine;
     serial_link_t *serial = &headless->serial;
     step_ir(headless);
+    if (headless->options.ethernet_at >= 0 && now >= headless->options.ethernet_at) {
+        headless->options.ethernet_at = -1;
+        if (!ethernet_link_insert(&headless->ethernet, machine)) fprintf(stderr, "headless: cannot insert the Ethernet card (no libslirp, or the PC Card slot is in use)\n");
+    }
+    if (machine_ethernet_inserted(machine)) ethernet_link_pump(&headless->ethernet, machine);
     if (options->net_at >= 0 && now >= options->net_at && serial->mode == SERIAL_OFF) {
         serial->options = options->net_options;
         serial_link_open(serial, SERIAL_NETWORK, NULL);
@@ -640,6 +652,7 @@ int main(int argc, char **argv) {
     agent_destroy(headless->agent);
     serial_link_close(&headless->serial);
     serial_link_close(&headless->ir);
+    ethernet_link_close(&headless->ethernet);
     machine_free(&headless->machine);
     free(headless);
     return 0;

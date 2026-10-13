@@ -5,6 +5,7 @@
 
 #include "core/arm.h"
 #include "core/cfcard.h"
+#include "core/ne2000.h"
 #include "core/eeprom.h"
 #include "core/key_text.h"
 #include "core/mailbox.h"
@@ -94,6 +95,7 @@ struct machine {
     cfcard_slot_t card_slot[MACHINE_SOCKETS];
     char pending_card[MACHINE_SOCKETS][MACHINE_CARD_PATH_MAX];
     uint64_t pending_card_at[MACHINE_SOCKETS];
+    ne2000_t ethernet;
 };
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
@@ -147,3 +149,8 @@ bool       machine_insert_card(machine_t *machine, int socket, const char *path)
 void       machine_eject_card(machine_t *machine, int socket);
 bool       machine_card_inserted(machine_t *machine, int socket);
 void       machine_restore_cards(machine_t *machine);
+bool       machine_insert_ethernet(machine_t *machine, const uint8_t mac[6]);
+void       machine_eject_ethernet(machine_t *machine);
+bool       machine_ethernet_inserted(const machine_t *machine);
+size_t     machine_ethernet_take(machine_t *machine, uint8_t *frame, size_t max);
+void       machine_ethernet_give(machine_t *machine, const uint8_t *frame, size_t length);

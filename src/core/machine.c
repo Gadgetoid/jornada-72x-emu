@@ -66,8 +66,12 @@ static uint8_t *bus_page(void *context, uint32_t pa, bool write) {
     return NULL;
 }
 
+static pccard_slot_t card_slot(machine_t *machine, int socket) {
+    return (pccard_slot_t){ &machine->card_slot[socket], socket == MACHINE_SOCKET_PC_CARD ? &machine->ethernet : NULL };
+}
+
 static void card_lines(machine_t *machine, int socket) {
-    pccard_slot_t slot = { &machine->card_slot[socket] };
+    pccard_slot_t slot = card_slot(machine, socket);
     sa1111_set_socket(&machine->sa1111, socket, pccard_present(&slot), pccard_ready(&slot));
 }
 
@@ -79,7 +83,7 @@ static void cards_changed(machine_t *machine) {
 static bool card_access(machine_t *machine, uint32_t pa, int size, bool write, uint32_t *value) {
     pccard_address_t address;
     if (!pccard_decode(pa, &address)) return false;
-    pccard_slot_t slot = { &machine->card_slot[address.socket] };
+    pccard_slot_t slot = card_slot(machine, address.socket);
     pccard_access(&slot, &address, size, write, value);
     card_lines(machine, address.socket);
     update_lines(machine);
@@ -520,6 +524,7 @@ void machine_reset(machine_t *machine) {
     mailbox_clear(&machine->mailbox);
     machine->mailbox_received_at = 0;
     for (int socket = 0; socket < MACHINE_SOCKETS; socket++) cfcard_reset(&machine->card_slot[socket]);
+    ne2000_power_on(&machine->ethernet);
     cards_changed(machine);
 }
 
@@ -539,6 +544,7 @@ static bool insert_card_now(machine_t *machine, int socket, const char *path) {
 
 bool machine_insert_card(machine_t *machine, int socket, const char *path) {
     if (socket < 0 || socket >= MACHINE_SOCKETS) return false;
+    if (socket == MACHINE_SOCKET_PC_CARD && machine->ethernet.inserted) return false;
     cfcard_t *card = &machine->cards.card[socket];
     if (card->inserted && !strcmp(path, machine->cards.path[socket])) return true;
     if (!card->inserted) return insert_card_now(machine, socket, path);
@@ -588,7 +594,36 @@ void machine_restore_cards(machine_t *machine) {
         cfcard_rebind(&machine->card_slot[socket], image);
         if (!image) machine->cards.path[socket][0] = 0;
     }
+    ne2000_sanitize(&machine->ethernet);
     cards_changed(machine);
+}
+
+bool machine_insert_ethernet(machine_t *machine, const uint8_t mac[6]) {
+    if (machine->ethernet.inserted) return true;
+    if (machine_card_inserted(machine, MACHINE_SOCKET_PC_CARD)) return false;
+    ne2000_insert(&machine->ethernet, mac);
+    cards_changed(machine);
+    return true;
+}
+
+void machine_eject_ethernet(machine_t *machine) {
+    if (!machine->ethernet.inserted) return;
+    ne2000_eject(&machine->ethernet);
+    cards_changed(machine);
+}
+
+bool machine_ethernet_inserted(const machine_t *machine) {
+    return machine->ethernet.inserted;
+}
+
+size_t machine_ethernet_take(machine_t *machine, uint8_t *frame, size_t max) {
+    return ne2000_take_sent(&machine->ethernet, frame, max);
+}
+
+void machine_ethernet_give(machine_t *machine, const uint8_t *frame, size_t length) {
+    if (!ne2000_receive(&machine->ethernet, frame, length)) return;
+    card_lines(machine, MACHINE_SOCKET_PC_CARD);
+    update_lines(machine);
 }
 
 void machine_run(machine_t *machine, uint64_t cycles) {

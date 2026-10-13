@@ -105,19 +105,23 @@ debugmgr_check() {
     check "debugmgr starts after a soft reset" "$restarted" ok
 }
 
-com4_check() {
+build_test_program() {
     tools=${JORNADA_TOOLS:-../jornada-72x-tools}
     if [ ! -f "$tools/cmake/jornada-ce.cmake" ]; then
-        echo "skip COM4 over TCP (no jornada-72x-tools at $tools)"
-        return
+        echo "skip $2 (no jornada-72x-tools at $tools)"
+        return 1
     fi
     tools=$(cd "$tools" && pwd)
-    if ! cmake -S tests/comecho -B "$out/comecho" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$tools/cmake/jornada-ce.cmake" > "$out/comecho-build.log" 2>&1 ||
-        ! cmake --build "$out/comecho" >> "$out/comecho-build.log" 2>&1; then
-        echo "FAIL COM4 echo program builds"
+    if ! cmake -S tests/$1 -B "$out/$1" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$tools/cmake/jornada-ce.cmake" > "$out/$1-build.log" 2>&1 ||
+        ! cmake --build "$out/$1" >> "$out/$1-build.log" 2>&1; then
+        echo "FAIL $1 builds"
         failed=1
-        return
+        return 1
     fi
+}
+
+com4_check() {
+    build_test_program comecho "COM4 over TCP" || return 0
     socket=/tmp/jornada-com4-$$.sock
     rm -f "$socket"
     port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
@@ -149,6 +153,47 @@ PYTHON
     wait $emulator 2>/dev/null || true
     if grep -q "^unknown accesses: [1-9]" "$out/com4.log"; then echo "FAIL COM4 leaves no unknown accesses"; failed=1; else echo "ok   COM4 leaves no unknown accesses"; fi
     rm -f "$socket"
+}
+
+ethernet_check() {
+    build_test_program tcpprobe "Ethernet card" || return 0
+    socket=/tmp/jornada-ethernet-$$.sock
+    rm -f "$socket" "$out/ethernet.state"
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    ./headless --load=$out/desktop.state --seconds=300 --net=0 --rapi="$socket" --ethernet=120 --realtime=4 --save="$out/ethernet.state" > "$out/ethernet-setup.log" 2>&1 &
+    emulator=$!
+    for attempt in $(seq 1 120); do grep -q "^desktop: connection" "$out/ethernet-setup.log" && break; sleep 0.5; done
+    target="\\Windows\\tcpprobe.exe 10.0.2.2 $port"
+    printf '%s#%s' "${#target}" "$target" > "$out/tcpprobe.lnk"
+    tcpip='HKLM\Comm\SOCKETLPE1\Parms\TcpIp'
+    ./jornada-rapi --socket="$socket" put "$out/tcpprobe/tcpprobe.exe" '\Windows\tcpprobe.exe' > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" put "$out/tcpprobe.lnk" '\Windows\StartUp\tcpprobe.lnk' > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" reg set "$tcpip" EnableDHCP dword 1 > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" reg set "$tcpip" IpAddress multi 0.0.0.0 > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" reg set "$tcpip" Subnetmask multi 0.0.0.0 > /dev/null 2>&1
+    for attempt in $(seq 1 60); do ./jornada-rapi --socket="$socket" reg get 'HKLM\Comm\SOCKETLPE1\Parms\TcpIp' DhcpServer > "$out/ethernet-dhcp.txt" 2>&1 && break; sleep 2; done
+    check "Ethernet card gets a DHCP lease when inserted" "$(cat "$out/ethernet-dhcp.txt")" 'string "10.0.2.2"'
+    kill -TERM $emulator 2>/dev/null || true
+    wait $emulator 2>/dev/null || true
+    rm -f "$socket"
+    python3 - $port > "$out/ethernet-reply.txt" <<'PYTHON' &
+import socket, sys
+listener = socket.create_server(("127.0.0.1", int(sys.argv[1])))
+listener.settimeout(240)
+connection = listener.accept()[0]
+connection.settimeout(30)
+line = connection.recv(100)
+connection.sendall(b"hello from the host\n")
+echo = connection.recv(100)
+print("ok" if line == b"hello from the jornada\n" and echo == b"hello from the host\n" else "fail")
+PYTHON
+    listener=$!
+    ./headless --load="$out/ethernet.state" --soft-reset=0 --ethernet=0 --seconds=240 --realtime=4 > "$out/ethernet.log" 2>&1 &
+    emulator=$!
+    wait $listener || true
+    kill -TERM $emulator 2>/dev/null || true
+    wait $emulator 2>/dev/null || true
+    check "CE talks TCP over the Ethernet card after a soft reset" "$(cat "$out/ethernet-reply.txt")" ok
 }
 
 card_check() {
@@ -230,6 +275,7 @@ type_check
 speed_check
 debugmgr_check
 com4_check
+ethernet_check
 app_check
 app_profile_check
 gdb_check

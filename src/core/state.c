@@ -68,6 +68,7 @@ bool state_save(const machine_t *machine, const char *path, uint64_t host_time) 
     ok = ok && write_record(file, "eeprom", &machine->eeprom, sizeof machine->eeprom);
     ok = ok && write_record(file, "mcu", &machine->mcu, sizeof machine->mcu);
     ok = ok && write_record(file, "cards", &machine->cards, sizeof machine->cards);
+    ok = ok && write_record(file, "ethernet", &machine->ethernet, sizeof machine->ethernet);
     ok = ok && write_record(file, "dram", machine->dram, machine->dram_size);
     ok = ok && write_record(file, "end", NULL, 0);
     if (gzclose(file) != Z_OK) ok = false;
@@ -100,6 +101,7 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
     sed1356_t *display = malloc(sizeof *display);
     uint8_t *dram = malloc(machine->dram_size);
     machine_cards_t *cards = calloc(1, sizeof *cards);
+    ne2000_t *ethernet = calloc(1, sizeof *ethernet);
     sa1111_t sa1111;
     eeprom_t eeprom;
     mcu_t mcu;
@@ -113,11 +115,12 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
         { "mcu", &mcu, sizeof mcu, false },
         { "dram", dram, machine->dram_size, false },
         { "cards", cards, sizeof *cards, true },
+        { "ethernet", ethernet, sizeof *ethernet, true },
     };
     int record_count = (int)(sizeof records / sizeof records[0]);
     bool seen[sizeof records / sizeof records[0]] = { false };
     state_result_t result = STATE_OK;
-    if (!cpu || !soc || !display || !dram || !cards) result = STATE_UNREADABLE;
+    if (!cpu || !soc || !display || !dram || !cards || !ethernet) result = STATE_UNREADABLE;
     while (result == STATE_OK) {
         char tag[TAG_SIZE];
         uint32_t size;
@@ -193,6 +196,7 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
         mailbox_clear_queue(&machine->mailbox.to_emulator);
         if (host_time > header.host_time) machine->soc.rcnr += (uint32_t)(host_time - header.host_time);
         machine->cards = *cards;
+        machine->ethernet = *ethernet;
         machine_restore_cards(machine);
     }
     free(cpu);
@@ -200,6 +204,7 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
     free(display);
     free(dram);
     free(cards);
+    free(ethernet);
     return result;
 }
 

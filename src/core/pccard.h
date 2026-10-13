@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "core/cfcard.h"
+#include "core/ne2000.h"
 
 #define PCCARD_SOCKETS 2
 
@@ -21,6 +22,7 @@ typedef struct {
 
 typedef struct {
     cfcard_slot_t *storage;
+    ne2000_t      *ethernet;
 } pccard_slot_t;
 
 bool pccard_decode(uint32_t pa, pccard_address_t *address);
