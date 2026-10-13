@@ -437,6 +437,7 @@ static int start_debugging(app_t *app) {
 static void open_serial(app_t *app) {
     char sync_manifest[1024];
     serial_service_init(&app->serial, &app->settings);
+    app->serial.ir.tcp_port = app->launch.ir_tcp_port;
     rapi_data_path("sync-manifest.txt", sync_manifest, sizeof sync_manifest);
     app->desktop = desktop_create(app->serial.rapi_socket, sync_manifest);
     const char *failure = serial_service_start(&app->serial, app->session.machine);
@@ -487,7 +488,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "jornada720: cannot listen on agent socket %s\n", app->launch.agent_socket);
         return 1;
     }
-    app->runner = app_runner_create(machine, &app->input, app->debugger, app->agent, &app->serial.link);
+    app->runner = app_runner_create(machine, &app->input, app->debugger, app->agent, &app->serial.link, &app->serial.ir);
     if (!app->runner) {
         fprintf(stderr, "jornada720: cannot start machine runner\n");
         return 1;

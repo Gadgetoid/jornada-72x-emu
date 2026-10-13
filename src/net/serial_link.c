@@ -23,6 +23,7 @@
 void serial_link_init(serial_link_t *link, net_gateway_log_fn log) {
     memset(link, 0, sizeof *link);
     link->log = log;
+    link->port = MACHINE_SERIAL_PORT;
     link->options = (net_gateway_options_t){ NET_GATEWAY_DEFAULT_USER_AGENT, NULL, 0 };
     link->fd = -1;
     link->pty_slave = -1;
@@ -138,7 +139,7 @@ static speed_t speed_for(uint32_t baud) {
 }
 
 static void follow_baud(serial_link_t *link, machine_t *machine) {
-    uint32_t baud = machine_serial_baud(machine);
+    uint32_t baud = machine_uart_baud(machine, link->port);
     if (link->mode != SERIAL_DEVICE || !baud || baud == link->baud) return;
     struct termios settings;
     if (tcgetattr(link->fd, &settings) != 0) return;
@@ -159,11 +160,11 @@ static void pump_network(serial_link_t *link, machine_t *machine) {
     bool dtr = machine_serial_dtr(machine);
     if (dtr && !link->dtr) ppp_gateway_reset(link->gateway);
     link->dtr = dtr;
-    while ((count = machine_serial_take(machine, buffer, sizeof buffer)) > 0) ppp_gateway_from_guest(link->gateway, buffer, count);
+    while ((count = machine_uart_take(machine, link->port, buffer, sizeof buffer)) > 0) ppp_gateway_from_guest(link->gateway, buffer, count);
     ppp_gateway_poll(link->gateway, machine_cycles(machine) / (MACHINE_CPU_HZ / 1000));
-    size_t space = machine_serial_space(machine);
+    size_t space = machine_uart_space(machine, link->port);
     count = ppp_gateway_to_guest(link->gateway, buffer, space < sizeof buffer ? space : sizeof buffer);
-    machine_serial_send(machine, buffer, count);
+    machine_uart_send(machine, link->port, buffer, count);
 }
 
 static void link_log(serial_link_t *link, const char *message) {
@@ -208,7 +209,7 @@ static void pump_host(serial_link_t *link, machine_t *machine) {
     uint8_t buffer[4096];
     size_t count;
     follow_baud(link, machine);
-    while (link->queued < sizeof link->queue && (count = machine_serial_take(machine, link->queue + link->queued, sizeof link->queue - link->queued)) > 0) {
+    while (link->queued < sizeof link->queue && (count = machine_uart_take(machine, link->port, link->queue + link->queued, sizeof link->queue - link->queued)) > 0) {
         link->queued += count;
     }
     if (link->queued) {
@@ -222,11 +223,11 @@ static void pump_host(serial_link_t *link, machine_t *machine) {
             link->queued -= (size_t)written;
         }
     }
-    size_t space = machine_serial_space(machine);
+    size_t space = machine_uart_space(machine, link->port);
     if (space > sizeof buffer) space = sizeof buffer;
     if (!space) return;
     ssize_t got = read(link->fd, buffer, space);
-    if (got > 0) machine_serial_send(machine, buffer, (size_t)got);
+    if (got > 0) machine_uart_send(machine, link->port, buffer, (size_t)got);
     else if (link->mode == SERIAL_TCP && (got == 0 || !would_block())) drop_client(link);
 }
 
@@ -237,7 +238,7 @@ static void pump_tcp(serial_link_t *link, machine_t *machine) {
         return;
     }
     uint8_t discard[4096];
-    while (machine_serial_take(machine, discard, sizeof discard) > 0) {}
+    while (machine_uart_take(machine, link->port, discard, sizeof discard) > 0) {}
 }
 
 void serial_link_pump(serial_link_t *link, machine_t *machine) {

@@ -65,6 +65,7 @@ typedef struct {
     double net_at;
     double cable_at;
     int tcp_port;
+    int ir_tcp_port;
     int gdb_port;
     const char *gdb_process;
     const char *card[MACHINE_SOCKETS];
@@ -77,6 +78,7 @@ typedef struct {
     agent_t *agent;
     gdb_t *debugger;
     serial_link_t serial;
+    serial_link_t ir;
     bool soft_reset_done;
     FILE *trace;
     bool stopped;
@@ -255,6 +257,7 @@ static void usage(void) {
             "  --rapi=SOCKET      expose the Jornada's RAPI port on a Unix socket, for jornada-rapi --socket\n"
             "  --rapi-port=PORT   expose the Jornada's RAPI port on this TCP port on all interfaces\n"
             "  --tcp=PORT         offer COM1 as raw bytes on this TCP port, with the cable connected while a client is attached\n"
+            "  --tcp-com4=PORT    offer COM4 (the raw IR port, SA-1110 serial port 2) as raw bytes on this TCP port, without IrDA framing\n"
             "  --user-agent=TEXT  the web proxy's user agent\n"
             "  --cable=SECONDS    connect a bare serial cable, with nothing at the other end\n"
             "  --cable-send=SECONDS:TEXT  send bytes down the cable (\\r and \\n allowed); anything CE sends is printed\n"
@@ -325,6 +328,7 @@ static bool parse_options(headless_t *headless, int argc, char **argv) {
         else if (!strncmp(arg, "--net=", 6)) options->net_at = atof(arg + 6);
         else if (!strncmp(arg, "--cable=", 8)) options->cable_at = atof(arg + 8);
         else if (!strncmp(arg, "--tcp=", 6)) options->tcp_port = atoi(arg + 6);
+        else if (!strncmp(arg, "--tcp-com4=", 11)) options->ir_tcp_port = atoi(arg + 11);
         else if (!strncmp(arg, "--rapi=", 7)) options->net_options.rapi_socket = arg + 7;
         else if (!strncmp(arg, "--rapi-port=", 12)) options->net_options.rapi_port = atoi(arg + 12);
         else if (!strncmp(arg, "--user-agent=", 13)) options->net_options.user_agent = arg + 13;
@@ -416,6 +420,16 @@ static bool start_machine(headless_t *headless) {
             return false;
         }
     }
+    serial_link_init(&headless->ir, log_stderr);
+    headless->ir.port = MACHINE_IR_PORT;
+    if (options->ir_tcp_port) {
+        headless->ir.tcp_port = options->ir_tcp_port;
+        const char *failure = serial_link_open(&headless->ir, SERIAL_TCP, NULL);
+        if (failure) {
+            fprintf(stderr, "headless: COM4: %s\n", failure);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -478,10 +492,19 @@ static void finish_audio(headless_t *headless) {
     printf("audio: %u frames at %u Hz\n", headless->wav_frames, headless->wav_rate);
 }
 
+static void step_ir(headless_t *headless) {
+    serial_link_t *ir = &headless->ir;
+    if (ir->mode == SERIAL_OFF) return;
+    serial_link_pump(ir, &headless->machine);
+    if (serial_link_attached(ir) != machine_uart_connected(&headless->machine, MACHINE_IR_PORT))
+        machine_uart_connect(&headless->machine, MACHINE_IR_PORT, serial_link_attached(ir));
+}
+
 static void step_serial(headless_t *headless, double now) {
     const options_t *options = &headless->options;
     machine_t *machine = &headless->machine;
     serial_link_t *serial = &headless->serial;
+    step_ir(headless);
     if (options->net_at >= 0 && now >= options->net_at && serial->mode == SERIAL_OFF) {
         serial->options = options->net_options;
         serial_link_open(serial, SERIAL_NETWORK, NULL);
@@ -616,6 +639,7 @@ int main(int argc, char **argv) {
     gdb_destroy(headless->debugger);
     agent_destroy(headless->agent);
     serial_link_close(&headless->serial);
+    serial_link_close(&headless->ir);
     machine_free(&headless->machine);
     free(headless);
     return 0;

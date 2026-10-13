@@ -281,56 +281,90 @@ static bool dma_write(void *context, uint32_t pa, uint8_t value) {
     return true;
 }
 
+static machine_uart_queue_t *uart_queue(machine_t *machine, int port) {
+    if (port == MACHINE_SERIAL_PORT) return &machine->serial;
+    if (port == MACHINE_IR_PORT) return &machine->ir;
+    return NULL;
+}
+
 static void uart_transmit(void *context, int port, uint8_t value) {
-    machine_t *machine = context;
-    if (port != MACHINE_SERIAL_PORT || !machine->serial_connected) return;
-    if (machine->serial_tx_write - machine->serial_tx_read >= MACHINE_SERIAL_QUEUE) return;
-    machine->serial_tx[machine->serial_tx_write++ % MACHINE_SERIAL_QUEUE] = value;
+    machine_uart_queue_t *queue = uart_queue(context, port);
+    if (!queue || !queue->connected || queue->tx_write - queue->tx_read >= MACHINE_SERIAL_QUEUE) return;
+    queue->tx[queue->tx_write++ % MACHINE_SERIAL_QUEUE] = value;
 }
 
 static int uart_receive(void *context, int port) {
-    machine_t *machine = context;
-    if (port != MACHINE_SERIAL_PORT || machine->serial_rx_read == machine->serial_rx_write) return -1;
-    return machine->serial_rx[machine->serial_rx_read++ % MACHINE_SERIAL_QUEUE];
+    machine_uart_queue_t *queue = uart_queue(context, port);
+    if (!queue || queue->rx_read == queue->rx_write) return -1;
+    return queue->rx[queue->rx_read++ % MACHINE_SERIAL_QUEUE];
 }
 
 void machine_restore_serial_detect(machine_t *machine) {
     uint32_t bit = 1u << MACHINE_GPIO_SERIAL_DETECT;
-    if (machine->serial_connected) machine->soc.gpio_input &= ~bit;
+    if (machine->serial.connected) machine->soc.gpio_input &= ~bit;
     else machine->soc.gpio_input |= bit;
 }
 
-void machine_serial_connect(machine_t *machine, bool connected) {
-    machine->serial_connected = connected;
-    sa1110_set_gpio_input(&machine->soc, MACHINE_GPIO_SERIAL_DETECT, !connected);
+void machine_uart_connect(machine_t *machine, int port, bool connected) {
+    machine_uart_queue_t *queue = uart_queue(machine, port);
+    if (!queue) return;
+    queue->connected = connected;
+    if (port == MACHINE_SERIAL_PORT) sa1110_set_gpio_input(&machine->soc, MACHINE_GPIO_SERIAL_DETECT, !connected);
     if (connected) return;
-    machine->serial_rx_read = machine->serial_rx_write;
-    machine->serial_tx_read = machine->serial_tx_write;
+    queue->rx_read = queue->rx_write;
+    queue->tx_read = queue->tx_write;
 }
 
-bool machine_serial_connected(const machine_t *machine) {
-    return machine->serial_connected;
+bool machine_uart_connected(const machine_t *machine, int port) {
+    const machine_uart_queue_t *queue = uart_queue((machine_t *)machine, port);
+    return queue && queue->connected;
 }
 
-void machine_serial_send(machine_t *machine, const uint8_t *data, size_t length) {
-    for (size_t i = 0; i < length && machine_serial_space(machine); i++)
-        machine->serial_rx[machine->serial_rx_write++ % MACHINE_SERIAL_QUEUE] = data[i];
-    sa1110_uart_wake(&machine->soc, MACHINE_SERIAL_PORT, machine->cpu.cycles);
+size_t machine_uart_space(const machine_t *machine, int port) {
+    const machine_uart_queue_t *queue = uart_queue((machine_t *)machine, port);
+    return queue ? MACHINE_SERIAL_QUEUE - (queue->rx_write - queue->rx_read) : 0;
 }
 
-size_t machine_serial_take(machine_t *machine, uint8_t *out, size_t max) {
+void machine_uart_send(machine_t *machine, int port, const uint8_t *data, size_t length) {
+    machine_uart_queue_t *queue = uart_queue(machine, port);
+    if (!queue) return;
+    for (size_t i = 0; i < length && machine_uart_space(machine, port); i++) queue->rx[queue->rx_write++ % MACHINE_SERIAL_QUEUE] = data[i];
+    sa1110_uart_wake(&machine->soc, port, machine->cpu.cycles);
+}
+
+size_t machine_uart_take(machine_t *machine, int port, uint8_t *out, size_t max) {
+    machine_uart_queue_t *queue = uart_queue(machine, port);
     size_t count = 0;
-    while (count < max && machine->serial_tx_read != machine->serial_tx_write)
-        out[count++] = machine->serial_tx[machine->serial_tx_read++ % MACHINE_SERIAL_QUEUE];
+    while (queue && count < max && queue->tx_read != queue->tx_write) out[count++] = queue->tx[queue->tx_read++ % MACHINE_SERIAL_QUEUE];
     return count;
 }
 
+uint32_t machine_uart_baud(const machine_t *machine, int port) {
+    return sa1110_uart_baud(&machine->soc, port);
+}
+
+void machine_serial_connect(machine_t *machine, bool connected) {
+    machine_uart_connect(machine, MACHINE_SERIAL_PORT, connected);
+}
+
+bool machine_serial_connected(const machine_t *machine) {
+    return machine_uart_connected(machine, MACHINE_SERIAL_PORT);
+}
+
+void machine_serial_send(machine_t *machine, const uint8_t *data, size_t length) {
+    machine_uart_send(machine, MACHINE_SERIAL_PORT, data, length);
+}
+
+size_t machine_serial_take(machine_t *machine, uint8_t *out, size_t max) {
+    return machine_uart_take(machine, MACHINE_SERIAL_PORT, out, max);
+}
+
 size_t machine_serial_space(const machine_t *machine) {
-    return MACHINE_SERIAL_QUEUE - (machine->serial_rx_write - machine->serial_rx_read);
+    return machine_uart_space(machine, MACHINE_SERIAL_PORT);
 }
 
 uint32_t machine_serial_baud(const machine_t *machine) {
-    return sa1110_uart_baud(&machine->soc, MACHINE_SERIAL_PORT);
+    return machine_uart_baud(machine, MACHINE_SERIAL_PORT);
 }
 
 static bool gpio_output(const sa1110_t *soc, int pin, bool level) {

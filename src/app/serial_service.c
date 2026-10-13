@@ -39,6 +39,8 @@ void serial_service_init(serial_service_t *service, settings_t *settings) {
     memset(service, 0, sizeof *service);
     service->settings = settings;
     serial_link_init(&service->link, app_log);
+    serial_link_init(&service->ir, app_log);
+    service->ir.port = MACHINE_IR_PORT;
     service->link.tcp_port = (int)settings->serial_tcp_port;
     service->link.options.user_agent = settings->user_agent;
     if (app_rapi_socket_path(service->rapi_socket, sizeof service->rapi_socket)) service->link.options.rapi_socket = service->rapi_socket;
@@ -46,6 +48,11 @@ void serial_service_init(serial_service_t *service, settings_t *settings) {
 }
 
 const char *serial_service_start(serial_service_t *service, machine_t *machine) {
+    if (service->ir.tcp_port) {
+        const char *failure = serial_link_open(&service->ir, SERIAL_TCP, NULL);
+        if (failure) fprintf(stderr, "serial: COM4: %s\n", failure);
+        else fprintf(stderr, "serial: COM4 on TCP port %d\n", service->ir.tcp_port);
+    }
     const char *failure = set_serial(service, machine, (serial_mode_t)service->settings->serial, service->settings->serial_device);
     if (failure) service->settings->serial = SERIAL_OFF;
     return failure;
@@ -115,6 +122,12 @@ void serial_service_step(serial_service_t *service, machine_t *machine, notice_t
         if (attached != service->tcp_attached) notice_show(notice, attached ? "TCP client connected" : "TCP client disconnected", NOTICE_SHORT);
         service->tcp_attached = attached;
     }
+    if (service->ir.mode == SERIAL_TCP && serial_link_attached(&service->ir) != machine_uart_connected(machine, MACHINE_IR_PORT)) {
+        bool attached = serial_link_attached(&service->ir);
+        machine_uart_connect(machine, MACHINE_IR_PORT, attached);
+        if (attached != service->ir_attached) notice_show(notice, attached ? "COM4 client connected" : "COM4 client disconnected", NOTICE_SHORT);
+        service->ir_attached = attached;
+    }
     if (service->plug_at && machine_cycles(machine) >= service->plug_at) {
         service->plug_at = 0;
         machine_serial_connect(machine, true);
@@ -127,4 +140,5 @@ void serial_service_step(serial_service_t *service, machine_t *machine, notice_t
 
 void serial_service_close(serial_service_t *service) {
     serial_link_close(&service->link);
+    serial_link_close(&service->ir);
 }

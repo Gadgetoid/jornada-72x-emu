@@ -10,6 +10,7 @@ typedef struct {
     const char   *rom, *eeprom, *state_file, *machine;
     bool fresh, verbose;
     int gdb_port;
+    int ir_tcp_port;
     const char   *gdb_process;
     const char   *card, *pc_card;
     const char   *agent_socket;

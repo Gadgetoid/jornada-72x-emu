@@ -23,6 +23,7 @@
 #define MACHINE_AUDIO_FRAMES 65536
 #define MACHINE_SERIAL_QUEUE 8192
 #define MACHINE_SERIAL_PORT  3
+#define MACHINE_IR_PORT      2
 #define MACHINE_GPIO_SERIAL_DETECT 15
 #define MACHINE_POWER_KEY 0x7F
 #define MACHINE_SPEED_MAX 2
@@ -48,6 +49,14 @@ typedef struct {
     cfcard_t card[MACHINE_SOCKETS];
     char path[MACHINE_SOCKETS][MACHINE_CARD_PATH_MAX];
 } machine_cards_t;
+
+typedef struct {
+    bool connected;
+    uint8_t rx[MACHINE_SERIAL_QUEUE];
+    uint32_t rx_read, rx_write;
+    uint8_t tx[MACHINE_SERIAL_QUEUE];
+    uint32_t tx_read, tx_write;
+} machine_uart_queue_t;
 
 typedef struct machine machine_t;
 
@@ -78,11 +87,8 @@ struct machine {
     uint32_t mailbox_fault_va;
     int mailbox_fault_tries;
     uint64_t mailbox_received_at;
-    bool serial_connected;
-    uint8_t serial_rx[MACHINE_SERIAL_QUEUE];
-    uint32_t serial_rx_read, serial_rx_write;
-    uint8_t serial_tx[MACHINE_SERIAL_QUEUE];
-    uint32_t serial_tx_read, serial_tx_write;
+    machine_uart_queue_t serial;
+    machine_uart_queue_t ir;
     bool host_clock;
     machine_cards_t cards;
     cfcard_slot_t card_slot[MACHINE_SOCKETS];
@@ -110,6 +116,12 @@ size_t machine_serial_take(machine_t *machine, uint8_t *out, size_t max);
 size_t machine_serial_space(const machine_t *machine);
 uint32_t machine_serial_baud(const machine_t *machine);
 bool machine_serial_dtr(const machine_t *machine);
+void machine_uart_connect(machine_t *machine, int port, bool connected);
+bool machine_uart_connected(const machine_t *machine, int port);
+void machine_uart_send(machine_t *machine, int port, const uint8_t *data, size_t length);
+size_t machine_uart_take(machine_t *machine, int port, uint8_t *out, size_t max);
+size_t machine_uart_space(const machine_t *machine, int port);
+uint32_t machine_uart_baud(const machine_t *machine, int port);
 uint64_t machine_cycles(const machine_t *machine);
 bool machine_agent_running(const machine_t *machine);
 void machine_print_status(const machine_t *machine, FILE *out);

@@ -12,11 +12,13 @@
 
 typedef struct {
     serial_link_t link;
+    serial_link_t ir;
     settings_t *settings;
     char rapi_socket[1024];
     char notice[320];
     uint64_t plug_at, unplug_at, port_scan_at;
     bool tcp_attached;
+    bool ir_attached;
     char ports[SERIAL_PORT_MAX][SERIAL_LINK_PORT_NAME];
     int port_count;
 } serial_service_t;

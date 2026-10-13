@@ -105,6 +105,52 @@ debugmgr_check() {
     check "debugmgr starts after a soft reset" "$restarted" ok
 }
 
+com4_check() {
+    tools=${JORNADA_TOOLS:-../jornada-72x-tools}
+    if [ ! -f "$tools/cmake/jornada-ce.cmake" ]; then
+        echo "skip COM4 over TCP (no jornada-72x-tools at $tools)"
+        return
+    fi
+    tools=$(cd "$tools" && pwd)
+    if ! cmake -S tests/comecho -B "$out/comecho" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$tools/cmake/jornada-ce.cmake" > "$out/comecho-build.log" 2>&1 ||
+        ! cmake --build "$out/comecho" >> "$out/comecho-build.log" 2>&1; then
+        echo "FAIL COM4 echo program builds"
+        failed=1
+        return
+    fi
+    socket=/tmp/jornada-com4-$$.sock
+    rm -f "$socket"
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    ./headless --load=$out/desktop.state --seconds=300 --net=0 --rapi="$socket" --tcp-com4=$port --realtime=4 > "$out/com4.log" 2>&1 &
+    emulator=$!
+    for attempt in $(seq 1 120); do grep -q "^desktop: connection" "$out/com4.log" && break; sleep 0.5; done
+    echoed=fail
+    if ./jornada-rapi --socket="$socket" put "$out/comecho/comecho.exe" '\comecho.exe' > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" run '\comecho.exe' > /dev/null 2>&1; then
+        echoed=$(python3 - $port <<'PYTHON'
+import socket, sys, time
+connection = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2)
+time.sleep(2)
+connection.sendall(b"hello com4\r\n")
+received = b""
+deadline = time.time() + 20
+connection.settimeout(1)
+while time.time() < deadline and b"com4" not in received:
+    try:
+        received += connection.recv(256)
+    except socket.timeout:
+        pass
+print("ok" if received == b"hello com4\r\n" else "fail")
+PYTHON
+)
+    fi
+    check "COM4 echoes over TCP alongside RAPI" "$echoed" ok
+    kill -TERM $emulator 2>/dev/null || true
+    wait $emulator 2>/dev/null || true
+    if grep -q "^unknown accesses: [1-9]" "$out/com4.log"; then echo "FAIL COM4 leaves no unknown accesses"; failed=1; else echo "ok   COM4 leaves no unknown accesses"; fi
+    rm -f "$socket"
+}
+
 card_check() {
     socket=/tmp/jornada-card-$$.sock
     cards=$out/cards
@@ -183,6 +229,7 @@ power_check
 type_check
 speed_check
 debugmgr_check
+com4_check
 app_check
 app_profile_check
 gdb_check

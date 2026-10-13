@@ -7,7 +7,7 @@
 
 enum {
     LAUNCH_HEADING_MACHINE, LAUNCH_MACHINE, LAUNCH_STATE, LAUNCH_FRESH, LAUNCH_CARD, LAUNCH_PC_CARD, LAUNCH_SPEED, LAUNCH_OPTIMISATIONS,
-    LAUNCH_HEADING_CONNECTIONS, LAUNCH_NET, LAUNCH_TCP, LAUNCH_USER_AGENT, LAUNCH_AGENT,
+    LAUNCH_HEADING_CONNECTIONS, LAUNCH_NET, LAUNCH_TCP, LAUNCH_TCP_COM4, LAUNCH_USER_AGENT, LAUNCH_AGENT,
     LAUNCH_HEADING_DEBUGGING, LAUNCH_VERBOSE, LAUNCH_GDB, LAUNCH_GDB_PROCESS,
 };
 
@@ -23,6 +23,7 @@ static const option_t LAUNCH_OPTIONS[] = {
     [LAUNCH_HEADING_CONNECTIONS] = { NULL, NULL, "Connections", 0 },
     [LAUNCH_NET] = { "net", NULL, "plug the serial port into the PPP network (Devices > Serial Port), and remember that", 0 },
     [LAUNCH_TCP] = { "tcp", "[PORT]", "offer the serial port as raw bytes on a TCP port on all interfaces (9991, or PORT, kept in jornada720.ini), with the cable connected while a client is attached, and remember that", 0 },
+    [LAUNCH_TCP_COM4] = { "tcp-com4", "PORT", "offer COM4, the raw IR port, as raw bytes on a TCP port on all interfaces, without IrDA framing; for this run only", 0 },
     [LAUNCH_USER_AGENT] = { "user-agent", "TEXT", "the web proxy's user agent, kept in jornada720.ini; empty passes Pocket IE's own through", 0 },
     [LAUNCH_AGENT] = { "agent", "SOCKET", "pass messages between a guest agent's swi 0x51CE mailbox and one client on this Unix socket", 0 },
     [LAUNCH_HEADING_DEBUGGING] = { NULL, NULL, "Debugging", 0 },
@@ -62,6 +63,10 @@ static bool launch_option(void *context, int option, const char *value, char *er
         if (value && (!option_integer(value, 10, &integer) || integer < 1 || integer > 65535)) return false;
         if (value) settings->serial_tcp_port = (uint32_t)integer;
         settings->serial = SERIAL_TCP;
+        return true;
+    case LAUNCH_TCP_COM4:
+        if (!option_integer(value, 10, &integer) || integer < 1 || integer > 65535) return false;
+        launch->ir_tcp_port = (int)integer;
         return true;
     case LAUNCH_USER_AGENT: snprintf(settings->user_agent, sizeof settings->user_agent, "%s", value); return true;
     case LAUNCH_AGENT: launch->agent_socket = value; return true;

@@ -13,6 +13,7 @@ typedef enum { SERIAL_OFF, SERIAL_NETWORK, SERIAL_PTY, SERIAL_DEVICE, SERIAL_TCP
 
 typedef struct {
     serial_mode_t mode;
+    int port;
     ppp_gateway_t *gateway;
     net_gateway_log_fn log;
     net_gateway_options_t options;
