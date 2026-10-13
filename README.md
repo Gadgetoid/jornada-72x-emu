@@ -50,7 +50,7 @@ tools/mkcard.sh card.img 64 ~/some/folder
 ./jornada720 --card=card.img
 ```
 
-`make card` does the same (`CARD=card.img`, `CARD_MB=64`, `CARD_FILES=folders`). `mkcard.sh` uses `hdiutil` on macOS and `sfdisk`, `mkfs.fat` and `mtools` on Linux. To read an image on the host, `hdiutil attach -imagekey diskimage-class=CRawDiskImage card.img` on macOS or `mcopy -i card.img@@512` on Linux; eject it in the emulator first. Writes go straight to the image.
+`make card` does the same (`CARD=card.img`, `CARD_MB=64`, `CARD_FILES=folders`). `mkcard.sh` needs mtools (`brew install mtools` or `apt install mtools`). It formats with `hdiutil` on macOS or `sfdisk` and `mkfs.fat` on Linux, copies with `mcopy`, then `tools/fatcase.py` gives every short lower-case name a long-name entry. mtools and macOS store those names with the NT case flags, which CE 3.0 ignores, so without it CE shows them in upper case. To read an image on the host, `mcopy -i card.img@@512`, or `hdiutil attach -imagekey diskimage-class=CRawDiskImage card.img` on macOS; eject it in the emulator first. Writes go straight to the image.
 
 Cards can be inserted and ejected while CE runs (Devices, or dropping a `.img` file on the window for the CompactFlash slot); inserting a different image ejects the old one and inserts the new one a second later so CE sees the change. A saved state keeps its cards and reopens the images on load; a missing image is ejected. The Insert Card Image dialog opens in the `cards` folder of the data folder. headless takes `--card`, `--pc-card`, `--eject-card=T` and `--eject-pc-card=T`.
 

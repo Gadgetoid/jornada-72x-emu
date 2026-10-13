@@ -201,6 +201,7 @@ card_check() {
     cards=$out/cards
     rm -rf "$cards" "$socket" && mkdir -p "$cards/cf/files" "$cards/pc/files"
     echo "hello from the host" > "$cards/cf/files/HELLO.TXT"
+    echo "lower case" > "$cards/cf/files/readme.txt"
     echo "hello from the PC Card" > "$cards/pc/files/PCCARD.TXT"
     marker="written by CE over RAPI $$"
     echo "$marker" > "$cards/put.txt"
@@ -213,11 +214,13 @@ card_check() {
     ./jornada-rapi --socket="$socket" get '\Storage Card\files\PCCARD.TXT' "$cards/pccard.back" > /dev/null 2>&1 || true
     ./jornada-rapi --socket="$socket" get '\Storage Card2\files\HELLO.TXT' "$cards/hello.back" > /dev/null 2>&1 || true
     ./jornada-rapi --socket="$socket" put "$cards/put.txt" '\Storage Card2\put.txt' > /dev/null 2>&1 || true
+    ./jornada-rapi --socket="$socket" ls '\Storage Card2\files' > "$cards/listing.txt" 2>&1 || true
     kill -TERM $emulator 2>/dev/null || true
     wait $emulator 2>/dev/null || true
     rm -f "$socket"
     check "CE mounts a PC Card image as Storage Card" "$(cat "$cards/pccard.back" 2>/dev/null)" "hello from the PC Card"
     check "CE mounts a CompactFlash image as Storage Card2" "$(cat "$cards/hello.back" 2>/dev/null)" "hello from the host"
+    check "CE keeps a card file's lower-case name" "$(grep -c ' readme\.txt$' "$cards/listing.txt")" 1
     check "a file put over RAPI is written to the image" "$(LC_ALL=C grep -a -c "$marker" "$cards/cf.img")" 1
     open="--tap=10:34:18:0.1 --tap=10.5:34:18:0.1"
     ./headless --load=$out/desktop.state --seconds=20 $open --screenshot="$cards/none.png" > /dev/null
