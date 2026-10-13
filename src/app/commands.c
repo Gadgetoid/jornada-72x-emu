@@ -273,6 +273,9 @@ void app_command(app_t *app, int item, int *switch_to, bool *events_seen) {
         machine_eject_card(machine, item == MENU_EJECT_CARD ? MACHINE_SOCKET_CF : MACHINE_SOCKET_PC_CARD);
         notice_show(&app->notice, "card ejected", NOTICE_SHORT);
         break;
+    case MENU_ETHERNET_CARD:
+        notice_show(&app->notice, ethernet_service_toggle(&app->ethernet, machine), NOTICE_LONG);
+        break;
     case MENU_SEND_FILES:
         SDL_ShowOpenFileDialog(picks_done, (void *)(intptr_t)PICK_SEND, app->window, NULL, 0, NULL, true);
         break;
@@ -414,6 +417,9 @@ void app_update_menus(app_t *app, bool device_online) {
     menu_set_checked(MENU_NETWORK_RAPI, settings->network_rapi != 0);
     menu_set_enabled(MENU_EJECT_CARD, machine_card_inserted(machine, MACHINE_SOCKET_CF));
     menu_set_enabled(MENU_EJECT_PC_CARD, machine_card_inserted(machine, MACHINE_SOCKET_PC_CARD));
+    menu_set_enabled(MENU_INSERT_PC_CARD, !machine_ethernet_inserted(machine));
+    menu_set_enabled(MENU_ETHERNET_CARD, ethernet_service_available(machine));
+    menu_set_checked(MENU_ETHERNET_CARD, machine_ethernet_inserted(machine));
     menu_set_enabled(MENU_SERIAL_NETWORK, net_gateway_available());
     menu_set_checked(MENU_SERIAL_OFF, serial->link.mode == SERIAL_OFF);
     menu_set_checked(MENU_SERIAL_NETWORK, serial->link.mode == SERIAL_NETWORK);

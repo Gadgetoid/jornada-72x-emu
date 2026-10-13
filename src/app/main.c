@@ -453,6 +453,7 @@ static void shut_down(app_t *app) {
     app->agent = NULL;
     desktop_destroy(app->desktop);
     serial_service_close(&app->serial);
+    ethernet_service_close(&app->ethernet);
     free(app->picked);
     if (!machine_save(machine, app->session.state_path, (int64_t)time(NULL))) fprintf(stderr, "jornada720: cannot save %s\n", app->session.state_path);
     if (app_log_verbose()) machine_print_status(machine, stderr);
@@ -484,11 +485,13 @@ int main(int argc, char **argv) {
     result = start_debugging(app);
     if (result) return result;
     open_serial(app);
+    ethernet_service_init(&app->ethernet, &app->settings);
+    if (app->launch.ethernet && !ethernet_link_insert(&app->ethernet.link, machine)) fprintf(stderr, "jornada720: cannot insert the Ethernet card\n");
     if (app->launch.agent_socket && !(app->agent = agent_create(app->launch.agent_socket, app_log_always))) {
         fprintf(stderr, "jornada720: cannot listen on agent socket %s\n", app->launch.agent_socket);
         return 1;
     }
-    app->runner = app_runner_create(machine, &app->input, app->debugger, app->agent, &app->serial.link, &app->serial.ir);
+    app->runner = app_runner_create(machine, &app->input, app->debugger, app->agent, &app->serial.link, &app->serial.ir, &app->ethernet.link);
     if (!app->runner) {
         fprintf(stderr, "jornada720: cannot start machine runner\n");
         return 1;

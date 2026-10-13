@@ -6,7 +6,7 @@
 #include "core/machine.h"
 
 enum {
-    LAUNCH_HEADING_MACHINE, LAUNCH_MACHINE, LAUNCH_STATE, LAUNCH_FRESH, LAUNCH_CARD, LAUNCH_PC_CARD, LAUNCH_SPEED, LAUNCH_OPTIMISATIONS,
+    LAUNCH_HEADING_MACHINE, LAUNCH_MACHINE, LAUNCH_STATE, LAUNCH_FRESH, LAUNCH_CARD, LAUNCH_PC_CARD, LAUNCH_ETHERNET, LAUNCH_SPEED, LAUNCH_OPTIMISATIONS,
     LAUNCH_HEADING_CONNECTIONS, LAUNCH_NET, LAUNCH_TCP, LAUNCH_TCP_COM4, LAUNCH_USER_AGENT, LAUNCH_AGENT,
     LAUNCH_HEADING_DEBUGGING, LAUNCH_VERBOSE, LAUNCH_GDB, LAUNCH_GDB_PROCESS,
 };
@@ -18,6 +18,7 @@ static const option_t LAUNCH_OPTIONS[] = {
     [LAUNCH_FRESH] = { "fresh", NULL, "ignore the saved state and cold boot", 0 },
     [LAUNCH_CARD] = { "card", "IMAGE", "insert a CompactFlash card backed by a raw disk image", 0 },
     [LAUNCH_PC_CARD] = { "pc-card", "IMAGE", "insert a card image in the PC Card slot", 0 },
+    [LAUNCH_ETHERNET] = { "ethernet", NULL, "insert an NE2000 Ethernet card in the PC Card slot, on its own network with DHCP", 0 },
     [LAUNCH_SPEED] = { "speed", "N", "CPU speed multiple against the timers: 1 or 2, and remember that", 0 },
     [LAUNCH_OPTIMISATIONS] = { "optimisations", "[on|off]", "run some of CE's routines natively and skip busy-waits on the clock, and remember that", 0 },
     [LAUNCH_HEADING_CONNECTIONS] = { NULL, NULL, "Connections", 0 },
@@ -44,6 +45,7 @@ static bool launch_option(void *context, int option, const char *value, char *er
     case LAUNCH_FRESH: launch->fresh = true; return true;
     case LAUNCH_CARD: launch->card = value; return true;
     case LAUNCH_PC_CARD: launch->pc_card = value; return true;
+    case LAUNCH_ETHERNET: launch->ethernet = true; return true;
     case LAUNCH_SPEED:
         if (!option_integer(value, 10, &integer) || integer < 1 || integer > MACHINE_SPEED_MAX) return false;
         settings->speed = (uint32_t)integer;

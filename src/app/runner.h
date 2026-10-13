@@ -5,11 +5,12 @@
 #include "app/input.h"
 #include "core/agent.h"
 #include "core/gdb.h"
+#include "net/ethernet_link.h"
 #include "net/serial_link.h"
 
 typedef struct app_runner app_runner_t;
 
-app_runner_t *app_runner_create(machine_t *machine, input_queue_t *input, gdb_t *debugger, agent_t *agent, serial_link_t *serial, serial_link_t *ir);
+app_runner_t *app_runner_create(machine_t *machine, input_queue_t *input, gdb_t *debugger, agent_t *agent, serial_link_t *serial, serial_link_t *ir, ethernet_link_t *ethernet);
 void          app_runner_lock(app_runner_t *runner);
 void          app_runner_unlock(app_runner_t *runner);
 void          app_runner_set_machine_locked(app_runner_t *runner, machine_t *machine);

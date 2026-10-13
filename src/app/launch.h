@@ -8,7 +8,7 @@
 typedef struct {
     settings_t   *settings;
     const char   *rom, *eeprom, *state_file, *machine;
-    bool fresh, verbose;
+    bool fresh, verbose, ethernet;
     int gdb_port;
     int ir_tcp_port;
     const char   *gdb_process;

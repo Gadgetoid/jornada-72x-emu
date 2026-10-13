@@ -13,6 +13,7 @@
 #include "app/picks.h"
 #include "app/profiles.h"
 #include "app/runner.h"
+#include "app/ethernet_service.h"
 #include "app/serial_service.h"
 #include "app/settings.h"
 #include "app/snapshot_store.h"
@@ -50,6 +51,7 @@ typedef struct {
     scroller_t scroller;
     notice_t notice;
     serial_service_t serial;
+    ethernet_service_t ethernet;
     desktop_t *desktop;
     dropped_t dropped;
     picked_t *picked;
