@@ -83,6 +83,7 @@ struct sa1110 {
     sa1110_board_t board;
     sa1110_serial_t serial[4];
     uint32_t dma_offset[6][2];
+    uint32_t hscr2;
 };
 
 void sa1110_reset(sa1110_t *soc, uint64_t cycle);

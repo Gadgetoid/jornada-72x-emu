@@ -9,6 +9,7 @@
 #define GPIO_BASE   0x90040000u
 #define IC_BASE     0x90050000u
 #define PPC_BASE    0x90060000u
+#define HSCR2_RESET 0x000C0000u
 #define MEMORY_BASE 0xA0000000u
 #define DMA_BASE    0xB0000000u
 #define LCD_BASE    0xB0100000u
@@ -103,6 +104,7 @@ void sa1110_reset(sa1110_t *soc, uint64_t cycle) {
     soc->rtc_next_cycle = cycle + cpu_hz;
     soc->rcsr = 1;
     soc->posr = 1;
+    soc->hscr2 = HSCR2_RESET;
     soc->sssr = SSSR_TNF | SSSR_TFS;
     soc->mcsr = MCSR_ANF | MCSR_TNF;
 }
@@ -506,6 +508,7 @@ bool sa1110_read(sa1110_t *soc, uint64_t cycle, uint32_t pa, uint32_t *value) {
         case 0x08: *value = soc->ppar; return true;
         case 0x0C: *value = soc->psdr; return true;
         case 0x10: *value = soc->ppfr; return true;
+        case 0x28: *value = soc->hscr2; return true;
         case 0x30: *value = soc->mccr1; return true;
         }
         break;
@@ -635,6 +638,7 @@ bool sa1110_write(sa1110_t *soc, uint64_t cycle, uint32_t pa, uint32_t value) {
         case 0x08: soc->ppar = value; return true;
         case 0x0C: soc->psdr = value; return true;
         case 0x10: soc->ppfr = value; return true;
+        case 0x28: soc->hscr2 = value & HSCR2_RESET; return true;
         case 0x30: soc->mccr1 = value; return true;
         }
         break;
