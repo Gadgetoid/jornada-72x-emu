@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "app/host.h"
+#include "app/log.h"
 #include "app/paths.h"
 #include "net/ppp_gateway.h"
 
@@ -37,7 +38,7 @@ static const char *set_serial(serial_service_t *service, machine_t *machine, ser
 void serial_service_init(serial_service_t *service, settings_t *settings) {
     memset(service, 0, sizeof *service);
     service->settings = settings;
-    serial_link_init(&service->link, NULL);
+    serial_link_init(&service->link, app_log);
     service->link.tcp_port = (int)settings->serial_tcp_port;
     service->link.options.user_agent = settings->user_agent;
     if (app_rapi_socket_path(service->rapi_socket, sizeof service->rapi_socket)) service->link.options.rapi_socket = service->rapi_socket;
