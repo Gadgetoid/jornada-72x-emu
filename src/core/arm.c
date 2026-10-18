@@ -82,7 +82,23 @@ void arm_set_cpsr(arm_cpu_t *cpu, uint32_t value) {
     cpu->cpsr = value;
 }
 
+static void forget_recent_pages(arm_cpu_t *cpu, bool instruction, bool data) {
+    if (instruction) cpu->recent_fetch.host = NULL;
+    if (data) cpu->recent_read.host = cpu->recent_write.host = NULL;
+}
+
+static bool recent_page(const arm_recent_page_t *recent, uint32_t mva, bool user) {
+    return recent->host && (mva & ~BLOCK_MASK) == recent->tag && user == recent->user;
+}
+
+static void remember_page(arm_recent_page_t *recent, const arm_page_cache_t *slot, bool user) {
+    recent->host = slot->host;
+    recent->tag = slot->tag;
+    recent->user = user;
+}
+
 void arm_flush_translations(arm_cpu_t *cpu) {
+    forget_recent_pages(cpu, true, true);
     if (++cpu->generation == 0) {
         memset(cpu->read_cache, 0, sizeof cpu->read_cache);
         memset(cpu->write_cache, 0, sizeof cpu->write_cache);
@@ -240,6 +256,7 @@ static int tlb_translate(arm_cpu_t *cpu, arm_tlb_t *tlb, uint32_t mva, uint32_t 
     if (!descriptor(cpu, mva, &entry, fault)) return -1;
     slot = (int)tlb->next;
     tlb->next = (tlb->next + 1) % ARM_TLB_ENTRIES;
+    forget_recent_pages(cpu, tlb == &cpu->instruction_tlb, tlb == &cpu->data_tlb);
     if (++cpu->tlb_serial == 0) cpu->tlb_serial = 1;
     entry.serial = cpu->tlb_serial;
     tlb->entries[slot] = entry;
@@ -334,14 +351,22 @@ static bool load(arm_cpu_t *cpu, uint32_t va, int size, uint32_t *value, bool us
         return false;
     }
     uint32_t mva = modified_address(cpu, va), fault = 0;
-    arm_page_cache_t *slot = lookup(cpu, ACCESS_READ, mva, user, &fault);
-    if (!slot) {
-        data_abort(cpu, mva, fault);
-        return false;
-    }
     uint32_t offset = mva & BLOCK_MASK;
-    if (slot->host) {
-        uint8_t *at = slot->host + offset;
+    arm_page_cache_t *slot = NULL;
+    uint8_t *page;
+    if (recent_page(&cpu->recent_read, mva, user)) {
+        page = cpu->recent_read.host;
+    } else {
+        slot = lookup(cpu, ACCESS_READ, mva, user, &fault);
+        if (!slot) {
+            data_abort(cpu, mva, fault);
+            return false;
+        }
+        page = slot->host;
+        if (page) remember_page(&cpu->recent_read, slot, user);
+    }
+    if (page) {
+        uint8_t *at = page + offset;
         if (size == 4) memcpy(value, at, 4);
         else if (size == 2) {
             uint16_t half;
@@ -361,14 +386,22 @@ static bool store(arm_cpu_t *cpu, uint32_t va, int size, uint32_t value, bool us
         return false;
     }
     uint32_t mva = modified_address(cpu, va), fault = 0;
-    arm_page_cache_t *slot = lookup(cpu, ACCESS_WRITE, mva, user, &fault);
-    if (!slot) {
-        data_abort(cpu, mva, fault);
-        return false;
-    }
     uint32_t offset = mva & BLOCK_MASK;
-    if (slot->host) {
-        uint8_t *at = slot->host + offset;
+    arm_page_cache_t *slot = NULL;
+    uint8_t *page;
+    if (recent_page(&cpu->recent_write, mva, user)) {
+        page = cpu->recent_write.host;
+    } else {
+        slot = lookup(cpu, ACCESS_WRITE, mva, user, &fault);
+        if (!slot) {
+            data_abort(cpu, mva, fault);
+            return false;
+        }
+        page = slot->host;
+        if (page) remember_page(&cpu->recent_write, slot, user);
+    }
+    if (page) {
+        uint8_t *at = page + offset;
         if (size == 4) memcpy(at, &value, 4);
         else if (size == 2) {
             uint16_t half = (uint16_t)value;
@@ -772,8 +805,14 @@ static void cp15_write(arm_cpu_t *cpu, uint32_t op, uint32_t crn, uint32_t crm, 
         cpu->far = value;
         break;
     case 8:
-        if (crm == 7 || crm == 5) tlb_flush(&cpu->instruction_tlb);
-        if (crm == 7 || (crm == 6 && opc2 == 0)) tlb_flush(&cpu->data_tlb);
+        if (crm == 7 || crm == 5) {
+            tlb_flush(&cpu->instruction_tlb);
+            forget_recent_pages(cpu, true, false);
+        }
+        if (crm == 7 || (crm == 6 && opc2 == 0)) {
+            tlb_flush(&cpu->data_tlb);
+            forget_recent_pages(cpu, false, true);
+        }
         if (crm == 6 && opc2 == 1) {
             int slot = tlb_find(&cpu->data_tlb, modified_address(cpu, value));
             if (slot >= 0) cpu->data_tlb.entries[slot].serial = 0;
@@ -876,9 +915,14 @@ static bool fetch(arm_cpu_t *cpu, uint32_t pc, uint32_t *op) {
     if (cpu->prefetched) return fetch_prefetched(cpu, pc, op);
     uint32_t mva = modified_address(cpu, pc), fault = 0;
     bool user = !privileged(cpu);
+    if (recent_page(&cpu->recent_fetch, mva, user)) {
+        memcpy(op, cpu->recent_fetch.host + (mva & BLOCK_MASK), 4);
+        return true;
+    }
     arm_page_cache_t *slot = lookup(cpu, ACCESS_FETCH, mva, user, &fault);
     if (slot) {
         if (slot->host) {
+            remember_page(&cpu->recent_fetch, slot, user);
             memcpy(op, slot->host + (mva & BLOCK_MASK), 4);
             return true;
         }

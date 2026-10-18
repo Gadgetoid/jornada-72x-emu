@@ -172,6 +172,7 @@ state_result_t state_load(machine_t *machine, const char *path, uint64_t host_ti
         memset(machine->cpu.write_cache, 0, sizeof machine->cpu.write_cache);
         memset(machine->cpu.fetch_cache, 0, sizeof machine->cpu.fetch_cache);
         machine->cpu.generation = 1;
+        machine->cpu.recent_fetch.host = machine->cpu.recent_read.host = machine->cpu.recent_write.host = NULL;
         sa1110_board_t soc_board = machine->soc.board;
         machine->soc = *soc;
         machine->soc.board = soc_board;

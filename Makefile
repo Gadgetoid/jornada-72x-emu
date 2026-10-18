@@ -144,7 +144,7 @@ apk-push:
 apk-install: icons
 	ICONS=$(BUILD)/icons sh tools/mkapk.sh install
 
-test: $(PROG) $(HEADLESS) $(NATIVECHECK)
+test: $(PROG) $(HEADLESS) $(RAPI_TOOL) $(NATIVECHECK)
 	./$(NATIVECHECK)
 	tests/boot.sh
 

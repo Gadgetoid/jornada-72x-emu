@@ -56,6 +56,12 @@ typedef struct {
 } arm_page_cache_t;
 
 typedef struct {
+    uint8_t *host;
+    uint32_t tag;
+    bool user;
+} arm_recent_page_t;
+
+typedef struct {
     uint32_t base;
     uint32_t mask;
     uint32_t pa;
@@ -107,6 +113,7 @@ struct arm_cpu {
     uint32_t undefined_count;
 
     arm_bus_t bus;
+    arm_recent_page_t recent_fetch, recent_read, recent_write;
     const uint8_t *optimiser_filter;
     void *optimiser_context;
     bool (*on_optimiser)(void *context, arm_cpu_t *cpu, uint32_t pc);
