@@ -50,10 +50,16 @@ typedef struct {
     uint32_t tag;
     uint32_t generation;
     uint32_t pa;
-    uint32_t serial;
-    int32_t slot;
     uint8_t *host;
 } arm_page_cache_t;
+
+#define ARM_TLB_FILLS 64
+
+typedef struct {
+    uint16_t count;
+    bool overflowed;
+    uint16_t slots[ARM_TLB_FILLS];
+} arm_tlb_fills_t;
 
 typedef struct {
     uint8_t *host;
@@ -113,7 +119,9 @@ struct arm_cpu {
     uint32_t undefined_count;
 
     arm_bus_t bus;
-    arm_recent_page_t recent_fetch, recent_read, recent_write;
+    arm_recent_page_t recent_fetch, recent_write;
+    arm_tlb_fills_t data_fills[ARM_TLB_ENTRIES];
+    arm_tlb_fills_t instruction_fills[ARM_TLB_ENTRIES];
     const uint8_t *optimiser_filter;
     void *optimiser_context;
     bool (*on_optimiser)(void *context, arm_cpu_t *cpu, uint32_t pc);
