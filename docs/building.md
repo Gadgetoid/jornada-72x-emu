@@ -1,15 +1,68 @@
 # Building
 
-Needs SDL3 and zlib. libslirp adds the PC Link network and libcurl the web proxy; without them the build still works.
+## Requirements
 
-macOS: `brew install sdl3 libslirp`, then `make`. Debian or Ubuntu: `sudo apt install build-essential pkg-config libsdl3-dev libslirp-dev libcurl4-openssl-dev zlib1g-dev`, then `make`. Without `libsdl3-dev` (Debian 12, Ubuntu 24.04), install `cmake curl libglib2.0-dev` and the X11 and Wayland development packages listed in `.github/workflows/build.yml`, then `sh tools/sdl3-static.sh` and `PKG_CONFIG_PATH=build/sdl3/lib/pkgconfig make SDL_STATIC=1`. Linux gets a menu bar drawn in the window (`MENU=bar`, the default there); macOS uses the system menu bar.
+| Library | Needed for |
+| --- | --- |
+| SDL3, zlib | Required |
+| libslirp | PC Link networking and the Ethernet card (optional) |
+| libcurl | The web proxy for Pocket IE (optional) |
 
-Android, from macOS: `brew install --cask android-ndk android-commandlinetools`, `brew install openjdk@21 meson ninja` and `sdkmanager "platforms;android-35" "build-tools;35.0.0"`, then `make apk` for `dist/jornada720.apk`. `tools/android-deps.sh` cross-builds GLib, libslirp, mbedTLS and curl into `build/android` the first time. Without a release key (`APK_KEYSTORE`, `APK_KEYSTORE_PASSWORD`, `APK_KEY_ALIAS`), the APK is a debug build signed with `~/.android/debug.keystore`. `make apk-install` installs it over adb; `make apk-push` replaces a debug install's native code without reinstalling.
+Without the optional libraries, the build still works without those features.
+
+## macOS
+
+```sh
+brew install sdl3 libslirp
+make
+```
+
+The app uses the system menu bar.
+
+## Debian or Ubuntu
+
+```sh
+sudo apt install build-essential pkg-config libsdl3-dev libslirp-dev libcurl4-openssl-dev zlib1g-dev
+make
+```
+
+On Debian 12 and Ubuntu 24.04, which lack `libsdl3-dev`, build SDL3 statically instead:
+
+1. Install `cmake curl libglib2.0-dev` and the X11 and Wayland development packages listed in `.github/workflows/build.yml`.
+2. `sh tools/sdl3-static.sh`
+3. `PKG_CONFIG_PATH=build/sdl3/lib/pkgconfig make SDL_STATIC=1`
+
+On Linux the menu bar is drawn in the window (`MENU=bar`, the default).
+
+## Android
+
+Build from macOS.
+
+1. Install the tools:
+
+   ```sh
+   brew install --cask android-ndk android-commandlinetools
+   brew install openjdk@21 meson ninja
+   sdkmanager "platforms;android-35" "build-tools;35.0.0"
+   ```
+
+2. `make apk` builds `dist/jornada720.apk`. The first time, `tools/android-deps.sh` cross-builds GLib, libslirp, mbedTLS and curl into `build/android`.
+
+| Command | What it does |
+| --- | --- |
+| `make apk-install` | Installs the APK over adb |
+| `make apk-push` | Replaces a debug install's native code without reinstalling |
+
+Without a release key (`APK_KEYSTORE`, `APK_KEYSTORE_PASSWORD`, `APK_KEY_ALIAS`), the APK is a debug build signed with `~/.android/debug.keystore`.
 
 ## Packages
 
-`make app` builds `Jornada720.app` on macOS, `make deb` the Debian package (with `mkcard.sh` in `/usr/share/jornada-72x-emu`), and `make apk` the Android APK as above.
+| Command | Builds |
+| --- | --- |
+| `make app` | `Jornada720.app` (macOS) |
+| `make deb` | The Debian package, with `mkcard.sh` in `/usr/share/jornada-72x-emu` |
+| `make apk` | The Android APK |
 
 ## Running from the source folder
 
-Run from this folder, `./jornada720` also finds `rom/jornada720.bin` and `rom/jorn720_eeprom.bin`, so a checkout with those files needs no data folder set-up.
+Run from the source folder, `./jornada720` also finds `rom/jornada720.bin` and `rom/jorn720_eeprom.bin`, so a checkout with those files needs no data folder set-up.

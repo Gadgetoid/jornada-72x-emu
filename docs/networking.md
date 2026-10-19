@@ -1,15 +1,65 @@
 # Networking and PC Link
 
+There are three ways to connect CE to the outside world:
+
+| Connection | Use it for | Turn on with |
+| --- | --- | --- |
+| PC Link over PPP | RAPI, file transfer, Pocket IE through the web proxy | `--net` or Devices > Network (PPP) |
+| Ethernet card | General networking without the serial cable | `--ethernet` or Devices > Ethernet Card |
+| Serial ports over TCP | Talking to CE programs over a raw serial port | `--tcp[=PORT]`, `--tcp-com4=PORT` |
+
+## Requirements
+
+PPP and the Ethernet card need a build with libslirp (included in the releases). The web proxy for Pocket IE also needs libcurl. See [building.md](building.md).
+
 ## PC Link over PPP
 
-`--net`, or Devices > Network (PPP), plugs a serial cable into the PPP gateway, and is remembered. CE sees the cable (GPIO 15 goes low) and starts PC Link, which connects at 57600. `./jornada-rapi` then talks to it over RAPI: `info`, `ls`, `put`, `get`, `run`, `reg` and more (`./jornada-rapi --help`).
+1. Start with `--net`, or choose Devices > Network (PPP). The setting is remembered.
+2. CE sees the serial cable plugged in and starts PC Link, which connects at 57600.
+3. Use `jornada-rapi` to talk to CE over RAPI.
+
+```sh
+./jornada-rapi info
+./jornada-rapi ls '\My Documents'
+./jornada-rapi put local.txt '\My Documents\local.txt'
+```
+
+`jornada-rapi --help` lists the commands: `info`, `ls`, `put`, `get`, `run`, `reg` and more.
+
+The PC Link menu also sends files, copies My Documents back, syncs a shared folder, points Pocket IE at the web proxy, offers RAPI over the network and sets the connection speed.
+
+CE is at 10.0.2.15 on this network, with the host at 10.0.2.2 and DNS at 10.0.2.3.
 
 ## Ethernet card
 
-`--ethernet`, or Devices > Ethernet Card, puts an NE2000-compatible card in the PC Card slot, on its own slirp network with DHCP giving CE 10.0.2.15, the host at 10.0.2.2 and DNS at 10.0.2.3, as on the PPP network. Its CIS identifies it as a Socket Communications Low Power Ethernet CF, which the ROM's `SocketLpe.dll` claims. The first time it's inserted, CE opens the Socket LP-E settings; choose DHCP there and it binds without a reset. That writes `HKLM\Comm\SOCKETLPE1\Parms\TcpIp` (`EnableDHCP` 1), which can also be set over RAPI before inserting the card. The card takes the PC Card slot, so it and a PC Card image can't be in at once. A saved state keeps it. headless takes `--ethernet[=SECONDS]`. The card and PPP can be used together; RAPI stays on PPP.
+`--ethernet`, or Devices > Ethernet Card, puts an NE2000-compatible card in the PC Card slot, on its own network with DHCP. Addresses are the same as on the PPP network.
+
+**First use:** CE opens the Socket LP-E driver's settings the first time the card goes in. Choose DHCP there and the card works straight away, with no reset.
+
+To set it up without the dialog, for scripts, set this over RAPI before inserting the card:
+
+```sh
+key='HKLM\Comm\SOCKETLPE1\Parms\TcpIp'
+./jornada-rapi reg set "$key" EnableDHCP dword 1
+./jornada-rapi reg set "$key" IpAddress multi 0.0.0.0
+./jornada-rapi reg set "$key" Subnetmask multi 0.0.0.0
+```
+
+Notes:
+
+- The card uses the PC Card slot, so it can't be in at the same time as a PC Card image.
+- A saved state keeps the card.
+- The card and PPP can be used together. RAPI stays on PPP.
+- headless takes `--ethernet[=SECONDS]`, inserting the card at that time.
+- The card identifies itself as a Socket Communications Low Power Ethernet CF, which the ROM's `SocketLpe.dll` drives.
 
 ## Serial ports over TCP
 
-`--tcp[=PORT]`, or Devices > TCP Port, offers the serial port as raw bytes on a TCP port instead (default 9991).
+| Option | Port in CE | Notes |
+| --- | --- | --- |
+| `--tcp[=PORT]` or Devices > TCP Port | COM1, the serial cable | Default port 9991. Replaces PPP on COM1. The cable counts as connected while a client is attached. |
+| `--tcp-com4=PORT` | COM4, the raw IR port | Works alongside PPP on COM1, so RAPI stays available. For this run only. |
 
-`--tcp-com4=PORT` (app and headless) offers COM4, CE's "Raw IR Port" on the SA-1110's serial port 2, as raw bytes on a TCP port, alongside whatever COM1 is doing. That keeps RAPI over PPP on COM1 available while a program talks to a serial port. The emulator passes the UART's bytes straight through, with no IrDA framing or infrared timing, so it's a convenience for testing rather than how the real port behaves. COM3 is IrCOMM, a virtual port over the IrDA stack, and the J720 has no COM2.
+Connect with any raw TCP client, such as `nc localhost 9991`.
+
+COM4 passes bytes straight through, with no IrDA framing or infrared timing. It's a convenience for testing, not how the real port behaves. CE's other ports: COM3 is IrCOMM, a virtual port over the IrDA stack, and the J720 has no COM2.

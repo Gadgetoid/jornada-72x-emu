@@ -1,5 +1,32 @@
 # Android
 
-The first run asks for the ROM and EEPROM, from the phone's storage or Downloads, and copies them into the app; Machine > Import ROMs and Cards adds more later, and copies card images into the `cards` folder. A finger is the stylus. In landscape the controls run down both sides of the screen, and in portrait across the top: Hide, Menu (or Back) for the menus, Esc, Tab, Ctrl, Alt and Shift (which stay down until tapped again), Kbd for the phone's keyboard, Power for the On/Off key, the arrows and Enter. Optimisations are on by default. Files live under `Android/data/org.jornada_emu.jornada/files/jornada-72x-emu`. Leaving the app saves the machine.
+## Requirements
+
+An arm64 phone or tablet with Android 9 or later, and the Jornada 720 ROM (and EEPROM, if you have it).
+
+## Getting started
+
+1. Install the `.apk` from a release.
+2. On the first run, pick the ROM and EEPROM from the phone's storage or Downloads. The app copies them in.
+3. Machine > Import ROMs and Cards adds more ROMs later, and copies card images into the `cards` folder.
+
+## Controls
+
+A finger is the stylus. The on-screen controls run down both sides of the screen in landscape, and across the top in portrait:
+
+| Control | What it does |
+| --- | --- |
+| Hide | Hides the controls |
+| Menu (or Back) | Opens the menus |
+| Esc, Tab, Enter, arrows | The keys |
+| Ctrl, Alt, Shift | Stay down until tapped again |
+| Kbd | Opens the phone's keyboard |
+| Power | The On/Off key |
+
+## Notes
+
+- Optimisations are on by default.
+- Leaving the app saves the machine.
+- Files live under `Android/data/org.jornada_emu.jornada/files/jornada-72x-emu`.
 
 Building the APK is covered in [building.md](building.md).
