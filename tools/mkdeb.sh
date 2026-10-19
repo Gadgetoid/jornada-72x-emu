@@ -16,6 +16,7 @@ install -D -m 755 jornada-rapi "$root/usr/bin/jornada-rapi"
 install -D -m 755 tools/mkcard.sh "$root/usr/share/$package/mkcard.sh"
 install -D -m 755 tools/fatcase.py "$root/usr/share/$package/fatcase.py"
 install -D -m 644 README.md "$root/usr/share/doc/$package/README.md"
+for doc in docs/*.md; do install -D -m 644 "$doc" "$root/usr/share/doc/$package/$doc"; done
 install -D -m 644 LICENSE "$root/usr/share/doc/$package/LICENSE"
 install -D -m 644 assets/icon.svg "$root/usr/share/icons/hicolor/scalable/apps/$package.svg"
 for size in 16 32 64 128 256 512; do install -D -m 644 "$icons/icon-$size.png" "$root/usr/share/icons/hicolor/${size}x${size}/apps/$package.png"; done

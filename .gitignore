@@ -1,7 +1,7 @@
 build/
 headless
 rom/
-docs/
+docs/native-optimisations.md
 reference/
 __pycache__/
 .DS_Store
