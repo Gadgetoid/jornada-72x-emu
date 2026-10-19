@@ -44,7 +44,7 @@ static void ram_access(rockwell_mdp_t *pump, uint32_t control, uint32_t address_
         pump->registers[data_reg] = (uint8_t)*word;
         pump->registers[data_reg + 1] = (uint8_t)(*word >> 8);
     }
-    pump->registers[control] = value & (uint8_t)~ACCESS_START;
+    pump->registers[control] = value & (uint8_t) ~ACCESS_START;
 }
 
 static void command(rockwell_mdp_t *pump, uint8_t value) {
@@ -85,7 +85,7 @@ void rockwell_mdp_write(rockwell_mdp_t *pump, uint32_t reg, uint8_t value) {
             ram_access(pump, REG_Y_CONTROL, REG_Y_ADDRESS, REG_Y_DATA_LOW, value);
         break;
     case REG_INTERRUPT:
-        pump->registers[REG_INTERRUPT] = value & (uint8_t)~INTERRUPT_NEWC;
+        pump->registers[REG_INTERRUPT] = value & (uint8_t) ~INTERRUPT_NEWC;
         break;
     default:
         break;
