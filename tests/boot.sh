@@ -155,6 +155,26 @@ PYTHON
     rm -f "$socket"
 }
 
+modem_check() {
+    build_test_program atprobe "internal modem" || return 0
+    socket=/tmp/jornada-modem-$$.sock
+    rm -f "$socket" "$out/atresult.txt"
+    ./headless --load=$out/desktop.state --seconds=300 --net=0 --rapi="$socket" --realtime=4 > "$out/modem.log" 2>&1 &
+    emulator=$!
+    for attempt in $(seq 1 120); do grep -q "^desktop: connection" "$out/modem.log" && break; sleep 0.5; done
+    if ./jornada-rapi --socket="$socket" put "$out/atprobe/atprobe.exe" '\atprobe.exe' > /dev/null 2>&1 &&
+        ./jornada-rapi --socket="$socket" run '\atprobe.exe' > /dev/null 2>&1; then
+        for attempt in $(seq 1 40); do
+            ./jornada-rapi --socket="$socket" get '\atresult.txt' "$out/atresult.txt" > /dev/null 2>&1 && grep -q "end" "$out/atresult.txt" && break
+            sleep 1
+        done
+    fi
+    kill -TERM $emulator 2>/dev/null || true
+    wait $emulator 2>/dev/null || true
+    rm -f "$socket"
+    check "the internal modem answers AT commands" "$(grep -c 'Hewlett Packard Internal V.90 Fax Modem' "$out/atresult.txt" 2>/dev/null)" 1
+}
+
 ethernet_check() {
     build_test_program tcpprobe "Ethernet card" || return 0
     socket=/tmp/jornada-ethernet-$$.sock
@@ -279,6 +299,7 @@ speed_check
 debugmgr_check
 com4_check
 ethernet_check
+modem_check
 app_check
 app_profile_check
 gdb_check

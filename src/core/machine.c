@@ -13,6 +13,8 @@
 #define ZERO_WINDOW 0x08000000u
 #define SOC_BASE    0x80000000u
 #define SOC_END     0xC0000000u
+#define MODEM_BASE  0x08000000u
+#define MODEM_SIZE  0x04000000u
 #define DEBUG_BOARD_BASE 0x18000000u
 #define DEBUG_BOARD_SIZE 0x04000000u
 
@@ -119,6 +121,10 @@ static bool bus_read(void *context, uint32_t pa, int size, uint32_t *value) {
         *value = sed1356_read(&machine->display, pa - SED1356_REGISTER_BASE, size);
         return true;
     }
+    if (pa - MODEM_BASE < MODEM_SIZE) {
+        *value = rockwell_mdp_read(&machine->modem, (pa - MODEM_BASE) >> 2);
+        return true;
+    }
     *value = 0;
     note_unknown(machine, pa, size, false, 0);
     return true;
@@ -153,6 +159,10 @@ static bool bus_write(void *context, uint32_t pa, int size, uint32_t value) {
     }
     if (pa - SED1356_REGISTER_BASE < SED1356_REGISTER_SIZE) {
         sed1356_write(&machine->display, pa - SED1356_REGISTER_BASE, size, value);
+        return true;
+    }
+    if (pa - MODEM_BASE < MODEM_SIZE) {
+        rockwell_mdp_write(&machine->modem, (pa - MODEM_BASE) >> 2, (uint8_t)value);
         return true;
     }
     note_unknown(machine, pa, size, true, value);
@@ -525,6 +535,7 @@ void machine_reset(machine_t *machine) {
     machine->mailbox_received_at = 0;
     for (int socket = 0; socket < MACHINE_SOCKETS; socket++) cfcard_reset(&machine->card_slot[socket]);
     ne2000_power_on(&machine->ethernet);
+    rockwell_mdp_reset(&machine->modem);
     cards_changed(machine);
 }
 

@@ -6,6 +6,7 @@
 #include "core/arm.h"
 #include "core/cfcard.h"
 #include "core/ne2000.h"
+#include "core/rockwell_mdp.h"
 #include "core/eeprom.h"
 #include "core/key_text.h"
 #include "core/mailbox.h"
@@ -96,6 +97,7 @@ struct machine {
     char pending_card[MACHINE_SOCKETS][MACHINE_CARD_PATH_MAX];
     uint64_t pending_card_at[MACHINE_SOCKETS];
     ne2000_t ethernet;
+    rockwell_mdp_t modem;
 };
 
 bool machine_init(machine_t *machine, const char *rom_path, const char *eeprom_path);
